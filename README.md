@@ -4,7 +4,7 @@ OpenBased is a self-hosted media server. This repository contains the server and
 The API is the product's only interface: the web UI, mobile apps and third-party clients all use the
 same endpoints and the same OAuth2 tokens.
 
-- Java 21, Spring Boot 3.5, Spring Authorization Server (OAuth2/OIDC)
+- Java 17 or newer, Spring Boot 3.5, Spring Authorization Server (OAuth2/OIDC)
 - H2 (embedded, default) or PostgreSQL
 - ffmpeg/ffprobe (optional) for stream probing, remuxing and transcoding
 
@@ -38,7 +38,7 @@ mvn package
 sudo packaging/linux/install.sh
 ```
 
-The installer needs Java 21+ (and ideally ffmpeg). It creates an `openbased` system user and installs:
+The installer needs Java 17+ (and ideally ffmpeg). It creates an `openbased` system user and installs:
 
 | Path | Contents |
 | --- | --- |

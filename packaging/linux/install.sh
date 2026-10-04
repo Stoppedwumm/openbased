@@ -30,10 +30,10 @@ fi
 [[ -f "$JAR" ]] || die "JAR not found: $JAR"
 
 if ! command -v java >/dev/null; then
-  die "Java 21 or newer is required (e.g. 'apt install openjdk-21-jre-headless' or 'dnf install java-21-openjdk-headless')"
+  die "Java 17 or newer is required (e.g. 'apt install openjdk-17-jre-headless' or 'dnf install java-17-openjdk-headless')"
 fi
 JAVA_MAJOR="$(java -version 2>&1 | awk -F'"' '/version/ {split($2, v, "."); print v[1]; exit}')"
-[[ "${JAVA_MAJOR:-0}" -ge 21 ]] || die "Java 21 or newer is required, found ${JAVA_MAJOR:-unknown}"
+[[ "${JAVA_MAJOR:-0}" -ge 17 ]] || die "Java 17 or newer is required, found ${JAVA_MAJOR:-unknown}"
 
 if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
   echo "warning: ffmpeg/ffprobe not found. Media will play only when the browser supports the file as-is." >&2
