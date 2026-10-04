@@ -1,0 +1,33 @@
+# OpenBased configuration. Settings here override the defaults built into the server.
+# Restart after editing:  sudo systemctl restart openbased
+
+server:
+  port: 8080
+
+openbased:
+  # The address users type into their browser. It must match exactly (scheme, host and port),
+  # because it is the OAuth2 issuer and the web UI's redirect target.
+  issuer: http://localhost:8080
+  data-dir: /var/lib/openbased
+
+  bootstrap:
+    admin-username: admin
+    # Set OPENBASED_ADMIN_PASSWORD in /etc/openbased/openbased.env, or leave it empty to have
+    # a password generated and logged on the first start.
+    admin-password: ${OPENBASED_ADMIN_PASSWORD:}
+
+  clients:
+    - client-id: openbased-web
+      name: OpenBased Web
+      # Keep these in sync with "issuer" above.
+      redirect-uris:
+        - http://localhost:8080/callback
+      post-logout-redirect-uris:
+        - http://localhost:8080/
+      grant-types: [authorization_code]
+
+  metadata:
+    tmdb:
+      # Or set TMDB_API_KEY in /etc/openbased/openbased.env
+      api-key: ${TMDB_API_KEY:}
+      language: en-US

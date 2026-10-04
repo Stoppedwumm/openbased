@@ -432,6 +432,90 @@ async function viewManage() {
     h('div', { class: 'panel' }, form));
 }
 
+// ---------------------------------------------------------------- api tokens
+
+const TOKEN_LIFETIMES = [['30 days', 30], ['90 days', 90], ['1 year', 365]];
+
+async function viewTokens(created) {
+  markActiveLibrary(null);
+  const list = (await api('/tokens')).items;
+  const order = SCOPES.split(' ');
+  const grantable = token.scopes.filter((s) => s !== 'openid')
+    .sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
+
+  const rows = list.map((t) => h('tr', {},
+    h('td', {}, t.name),
+    h('td', {}, t.scopes.join(' ')),
+    h('td', {}, new Date(t.createdAt).toLocaleDateString()),
+    h('td', {}, t.expiresAt ? new Date(t.expiresAt).toLocaleDateString() : 'never'),
+    h('td', {}, t.lastUsedAt ? new Date(t.lastUsedAt).toLocaleString() : 'never'),
+    h('td', {}, h('button', {
+      class: 'ghost',
+      onclick: async () => {
+        if (!confirm(`Revoke “${t.name}”? Scripts using it stop working immediately.`)) return;
+        await api(`/tokens/${t.id}`, { method: 'DELETE' });
+        viewTokens();
+      },
+    }, 'Revoke'))));
+
+  const message = h('span', { class: 'status' });
+  const form = h('form', {
+    onsubmit: async (event) => {
+      event.preventDefault();
+      const data = new FormData(form);
+      const scopes = data.getAll('scope');
+      if (!scopes.length) {
+        message.textContent = 'Pick at least one scope.';
+        message.className = 'error';
+        return;
+      }
+      try {
+        const result = await api('/tokens', {
+          method: 'POST',
+          body: { name: data.get('name'), scopes, expiresIn: Number(data.get('days')) * 86400 },
+        });
+        viewTokens(result);
+      } catch (error) {
+        message.textContent = error.message;
+        message.className = 'error';
+      }
+    },
+  },
+  h('input', { name: 'name', placeholder: 'Name, e.g. Backup script', required: true, maxlength: 100 }),
+  h('select', { name: 'days', 'aria-label': 'Expires after' },
+    TOKEN_LIFETIMES.map(([label, days]) => h('option', { value: days, selected: days === 90 }, `Expires in ${label}`))),
+  h('div', { class: 'scopes' }, grantable.map((scope) => h('label', {},
+    h('input', { type: 'checkbox', name: 'scope', value: scope, checked: scope === 'media.read' }), ' ', scope))),
+  h('button', { type: 'submit' }, 'Create token'),
+  message);
+
+  let reveal = null;
+  if (created) {
+    const value = h('code', { class: 'secret' }, created.token);
+    const copy = h('button', {
+      onclick: async () => {
+        await navigator.clipboard.writeText(created.token);
+        copy.textContent = 'Copied';
+      },
+    }, 'Copy');
+    reveal = h('div', { class: 'panel notice' },
+      h('strong', {}, `Token “${created.name}” created. Copy it now — it will not be shown again.`),
+      h('div', { class: 'secret-row' }, value, copy),
+      h('div', { class: 'status' }, 'Use it as: Authorization: Bearer <token>'));
+  }
+
+  show(
+    h('h2', {}, 'API tokens'),
+    h('p', { class: 'status' }, 'Personal access tokens let scripts and other tools use the API as you. '
+      + 'A token can only have permissions you have yourself.'),
+    reveal,
+    h('div', { class: 'panel' }, list.length
+      ? h('table', {}, h('thead', {}, h('tr', {}, ['Name', 'Scopes', 'Created', 'Expires', 'Last used', ''].map((t) => h('th', {}, t)))), h('tbody', {}, rows))
+      : h('p', { class: 'status' }, 'You have no tokens.')),
+    h('h2', {}, 'Create a token'),
+    h('div', { class: 'panel' }, form));
+}
+
 // ---------------------------------------------------------------- playback
 
 function capabilities() {
@@ -557,6 +641,7 @@ async function route() {
     else if (view === 'media' && id) await viewMedia(id);
     else if (view === 'search') await viewSearch(decodeURIComponent(id || ''));
     else if (view === 'manage' && hasScope('library.write')) await viewManage();
+    else if (view === 'tokens' && hasScope('profile')) await viewTokens();
     else await viewHome();
   } catch (error) {
     showError(error);
@@ -602,6 +687,8 @@ async function start() {
   } catch {
     // The profile scope is optional for browsing.
   }
+  $('#tokens').hidden = !hasScope('profile');
+  $('#tokens').addEventListener('click', () => go('#/tokens'));
   $('#manage').hidden = !hasScope('library.write');
   $('#manage').addEventListener('click', () => go('#/manage'));
   $('#logout').addEventListener('click', () => {

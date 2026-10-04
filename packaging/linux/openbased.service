@@ -1,0 +1,41 @@
+[Unit]
+Description=OpenBased media server
+Documentation=https://github.com/Stoppedwumm/openbased
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=openbased
+Group=openbased
+WorkingDirectory=/var/lib/openbased
+EnvironmentFile=-/etc/openbased/openbased.env
+ExecStart=/usr/bin/env java $JAVA_OPTS -jar /opt/openbased/openbased.jar \
+    --spring.config.additional-location=optional:file:/etc/openbased/
+# Spring Boot exits with 143 on SIGTERM.
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+# Hardening. Media folders may live anywhere (including /home and /mnt), and uploads write into
+# them, so the file system is only protected where OpenBased never needs to write.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

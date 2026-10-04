@@ -31,6 +31,39 @@ API documentation is generated from the controllers:
 - OpenAPI: `GET /api/v1/openapi.json`
 - Swagger UI: `GET /api/v1/docs`
 
+### Installing as a Linux service (systemd)
+
+```sh
+mvn package
+sudo packaging/linux/install.sh
+```
+
+The installer needs Java 21+ (and ideally ffmpeg). It creates an `openbased` system user and installs:
+
+| Path | Contents |
+| --- | --- |
+| `/opt/openbased/openbased.jar` | The server |
+| `/etc/openbased/application.yml` | Settings (issuer, port, clients, metadata); overrides the built-in defaults |
+| `/etc/openbased/openbased.env` | Secrets and JVM options: `TMDB_API_KEY`, `OPENBASED_ADMIN_PASSWORD`, `JAVA_OPTS` |
+| `/var/lib/openbased` | Database, signing key, uploads, artwork, plugins |
+| `/etc/systemd/system/openbased.service` | The systemd unit |
+
+Then:
+
+```sh
+sudo systemctl status openbased
+sudo journalctl -u openbased -f                              # logs
+sudo journalctl -u openbased | grep 'generated password'     # first admin password, if none was set
+```
+
+The `openbased` user needs read access to your media folders, and write access if you upload into them,
+for example `sudo setfacl -R -m u:openbased:rX /srv/media`. When reaching the server under another
+address, set `issuer` and the `openbased-web` redirect URIs in `/etc/openbased/application.yml` to it.
+
+To upgrade, build the new version and run `install.sh` again; configuration and data are kept.
+`sudo packaging/linux/uninstall.sh` removes the service (add `--purge` to also delete configuration, data
+and the user; media files are never touched).
+
 ### Configuration
 
 All settings live under `openbased.*` in [`application.yml`](src/main/resources/application.yml).
@@ -65,7 +98,7 @@ library isolation between users and the plugin lifecycle.
 | --- | --- |
 | Authorization Code + PKCE | Interactive clients (`/oauth2/authorize`, `/oauth2/token`) |
 | Client Credentials | Machine-to-machine; acts as the configured `service-user` |
-| Personal access tokens (`ob_pat_…`) | Scripts; created with `POST /api/v1/tokens` |
+| Personal access tokens (`ob_pat_…`) | Scripts; created on the web UI's **API tokens** page or with `POST /api/v1/tokens` |
 
 Discovery is at `/.well-known/openid-configuration`, keys at `/oauth2/jwks`, and UserInfo at
 `/api/v1/userinfo`.
