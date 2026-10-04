@@ -5,8 +5,8 @@ server:
   port: 8080
 
 openbased:
-  # The address users type into their browser. It must match exactly (scheme, host and port),
-  # because it is the OAuth2 issuer and the web UI's redirect target.
+  # The address you open OpenBased at, exactly as typed in the browser (scheme, host and port),
+  # e.g. http://bigbox:8080 or https://media.example.com. Sign-in only works at this address.
   issuer: http://localhost:8080
   data-dir: /var/lib/openbased
 
@@ -19,11 +19,10 @@ openbased:
   clients:
     - client-id: openbased-web
       name: OpenBased Web
-      # Keep these in sync with "issuer" above.
       redirect-uris:
-        - http://localhost:8080/callback
+        - ${openbased.issuer}/callback
       post-logout-redirect-uris:
-        - http://localhost:8080/
+        - ${openbased.issuer}/
       grant-types: [authorization_code]
 
   metadata:

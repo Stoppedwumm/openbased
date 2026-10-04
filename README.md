@@ -35,8 +35,13 @@ API documentation is generated from the controllers:
 
 ```sh
 mvn package
-sudo packaging/linux/install.sh
+sudo packaging/linux/install.sh --url http://bigbox:8080
 ```
+
+`--url` is the address you will open OpenBased at in the browser (defaults to `http://<hostname>:8080`).
+Signing in only works at that address, because it is where the server allows the OAuth2 redirect back
+to. It is stored as `issuer` in `/etc/openbased/application.yml`; change it there or re-run the installer
+with a new `--url`, then restart.
 
 The installer needs Java 17+ (and ideally ffmpeg). It creates an `openbased` system user and installs:
 
@@ -57,8 +62,7 @@ sudo journalctl -u openbased | grep 'generated password'     # first admin passw
 ```
 
 The `openbased` user needs read access to your media folders, and write access if you upload into them,
-for example `sudo setfacl -R -m u:openbased:rX /srv/media`. When reaching the server under another
-address, set `issuer` and the `openbased-web` redirect URIs in `/etc/openbased/application.yml` to it.
+for example `sudo setfacl -R -m u:openbased:rX /srv/media`.
 
 To upgrade, build the new version and run `install.sh` again; configuration and data are kept.
 `sudo packaging/linux/uninstall.sh` removes the service (add `--purge` to also delete configuration, data

@@ -650,6 +650,29 @@ async function route() {
 
 // ---------------------------------------------------------------- startup
 
+// Sign-in only works at the configured issuer address, because that is where the server
+// allows the OAuth2 redirect back to. Explain a mismatch rather than failing mid-flow.
+async function checkAddress() {
+  let issuer;
+  try {
+    issuer = (await (await fetch('/.well-known/openid-configuration')).json()).issuer;
+  } catch {
+    return true;
+  }
+  const expected = new URL(issuer).origin;
+  if (expected === location.origin) return true;
+  $('.account').hidden = true;
+  show(h('div', { class: 'panel' },
+    h('h2', {}, 'Wrong address for this server'),
+    h('p', {}, 'You opened OpenBased at ', h('strong', {}, location.origin), ', but it is configured for ',
+      h('strong', {}, expected), '. Signing in only works at the configured address.'),
+    h('p', {}, h('a', { href: expected + '/' }, `Open ${expected}`)),
+    h('p', { class: 'status' }, 'To use this address instead, set ', h('code', {}, `issuer: ${location.origin}`),
+      ' under openbased: in the server configuration (/etc/openbased/application.yml for the Linux service) '
+      + 'and restart the server (sudo systemctl restart openbased).')));
+  return false;
+}
+
 async function start() {
   const params = new URLSearchParams(location.search);
 
@@ -676,6 +699,7 @@ async function start() {
 
   token = loadToken();
   if (!token) {
+    if (!(await checkAddress())) return;
     await signIn();
     return;
   }

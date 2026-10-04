@@ -57,10 +57,10 @@ openbased:
     - client-id: openbased-web
       name: OpenBased Web
       redirect-uris:
-        - http://localhost:8080/callback
+        - ${openbased.issuer}/callback
         - http://localhost:5173/callback
       post-logout-redirect-uris:
-        - http://localhost:8080/
+        - ${openbased.issuer}/
       grant-types: [authorization_code]
     # Example confidential machine-to-machine client. It acts with the permissions of service-user.
     # - client-id: home-automation

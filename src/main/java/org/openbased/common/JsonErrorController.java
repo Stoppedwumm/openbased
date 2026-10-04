@@ -30,6 +30,10 @@ public class JsonErrorController implements ErrorController {
         if (status.is5xxServerError()) {
             error = "INTERNAL_ERROR";
         }
-        return ResponseEntity.status(status).body(errors.body(request, error, status.getReasonPhrase()));
+        // Container errors may carry a useful reason (e.g. which OAuth2 parameter was rejected).
+        Object reason = request.getAttribute(RequestDispatcher.ERROR_MESSAGE);
+        String message = status.is4xxClientError() && reason instanceof String r && !r.isBlank()
+                ? r : status.getReasonPhrase();
+        return ResponseEntity.status(status).body(errors.body(request, error, message));
     }
 }

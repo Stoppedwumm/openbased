@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Installs or upgrades OpenBased as a systemd service.
 #
-#   sudo packaging/linux/install.sh [path/to/openbased.jar]
+#   sudo packaging/linux/install.sh [--url http://bigbox:8080] [path/to/openbased.jar]
+#
+# --url is the address you open OpenBased at in the browser; sign-in only works there.
+# It defaults to http://<hostname>:8080 on the first install, and is left unchanged on
+# upgrades unless given.
 #
 # Re-running the script upgrades the JAR and restarts the service. Configuration in
 # /etc/openbased and data in /var/lib/openbased are never overwritten.
@@ -22,7 +26,20 @@ info() { echo "==> $*"; }
 [[ $EUID -eq 0 ]] || die "run as root, e.g. sudo $0"
 command -v systemctl >/dev/null || die "systemd is required"
 
-JAR="${1:-}"
+URL=""
+JAR=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --url) URL="${2:-}"; shift 2 ;;
+    --url=*) URL="${1#--url=}"; shift ;;
+    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+    *) JAR="$1"; shift ;;
+  esac
+done
+if [[ -n "$URL" ]]; then
+  URL="${URL%/}"
+  [[ "$URL" =~ ^https?://[^/]+$ ]] || die "--url must look like http://host:port (no path), got: $URL"
+fi
 if [[ -z "$JAR" ]]; then
   JAR="$(ls "$REPO_DIR"/target/openbased-*.jar 2>/dev/null | grep -v -- '-plain\.jar$' | head -n1 || true)"
   [[ -n "$JAR" ]] || die "no JAR found; build it first with 'mvn package' or pass its path"
@@ -53,6 +70,11 @@ install -d -m 0750 -o root -g "$SERVICE_USER" "$CONFIG_DIR"
 if [[ ! -e "$CONFIG_DIR/application.yml" ]]; then
   info "Creating $CONFIG_DIR/application.yml"
   install -m 0640 -o root -g "$SERVICE_USER" "$SCRIPT_DIR/application.yml" "$CONFIG_DIR/application.yml"
+  URL="${URL:-http://$(hostname):8080}"
+fi
+if [[ -n "$URL" ]]; then
+  info "Setting the server address to $URL"
+  sed -i -E "s|^(  issuer:).*|\1 $URL|" "$CONFIG_DIR/application.yml"
 fi
 if [[ ! -e "$CONFIG_DIR/openbased.env" ]]; then
   info "Creating $CONFIG_DIR/openbased.env"
@@ -73,12 +95,14 @@ else
   systemctl enable --now openbased
 fi
 
-PORT="$(awk '/^server:/ {s=1; next} s && /^[^ ]/ {s=0} s && /port:/ {print $2; exit}' "$CONFIG_DIR/application.yml")"
+ISSUER="$(awk '/^  issuer:/ {print $2; exit}' "$CONFIG_DIR/application.yml")"
 cat <<MSG
 
 OpenBased is installed and running.
 
-  Web UI:   http://localhost:${PORT:-8080}/
+  Web UI:   $ISSUER/
+            (sign-in only works at this address; change it with --url or the
+            "issuer" line in $CONFIG_DIR/application.yml)
   Config:   $CONFIG_DIR/application.yml and $CONFIG_DIR/openbased.env
   Data:     $DATA_DIR
   Logs:     journalctl -u openbased -f
