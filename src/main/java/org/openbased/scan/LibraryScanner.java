@@ -90,8 +90,9 @@ public class LibraryScanner {
         List<Path> found = new ArrayList<>();
         for (String root : library.getPaths()) {
             Path dir = Path.of(root);
-            if (!Files.isDirectory(dir)) {
-                log.warn("Library {} path {} is not a readable directory", libraryId, root);
+            var problem = org.openbased.library.FolderAccess.problem(dir.toAbsolutePath().normalize());
+            if (problem.isPresent()) {
+                log.warn("Skipping folder of library {}: {}", libraryId, problem.get());
                 continue;
             }
             try (Stream<Path> walk = Files.walk(dir)) {

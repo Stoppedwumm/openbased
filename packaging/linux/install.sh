@@ -113,6 +113,10 @@ OPENBASED_ADMIN_PASSWORD, its password is in the log:
   journalctl -u openbased | grep 'generated password'
 
 The service runs as the "$SERVICE_USER" user, which needs read access to your media
-folders (and write access for uploads), e.g.:
-  sudo setfacl -R -m u:$SERVICE_USER:rX /path/to/media
+folders (rwX instead of rX if you upload into them), e.g.:
+  sudo setfacl -R -m u:$SERVICE_USER:rX /path/to/media      # existing files
+  sudo setfacl -R -d -m u:$SERVICE_USER:rX /path/to/media   # files added later
+If the folder is inside a home directory, also let it pass through that directory:
+  sudo setfacl -m u:$SERVICE_USER:x /home/<you>
+Check with:  sudo -u $SERVICE_USER ls /path/to/media
 MSG

@@ -1,6 +1,5 @@
 package org.openbased.library;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -170,9 +169,9 @@ public class LibraryController {
             if (!path.isAbsolute()) {
                 throw ApiException.unprocessable("INVALID_LIBRARY_PATH", "Library paths must be absolute: " + raw);
             }
-            if (!Files.isDirectory(path)) {
-                throw ApiException.unprocessable("INVALID_LIBRARY_PATH", "Not a readable directory: " + raw);
-            }
+            FolderAccess.problem(path.normalize()).ifPresent(problem -> {
+                throw ApiException.unprocessable("INVALID_LIBRARY_PATH", problem);
+            });
             normalized.add(path.normalize().toString());
         }
         return normalized;

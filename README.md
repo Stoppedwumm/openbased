@@ -61,8 +61,19 @@ sudo journalctl -u openbased -f                              # logs
 sudo journalctl -u openbased | grep 'generated password'     # first admin password, if none was set
 ```
 
-The `openbased` user needs read access to your media folders, and write access if you upload into them,
-for example `sudo setfacl -R -m u:openbased:rX /srv/media`.
+The `openbased` user needs read access to your media folders (`rwX` instead of `rX` if you upload into
+them). With the `acl` package:
+
+```sh
+sudo setfacl -R -m u:openbased:rX /srv/media      # existing files
+sudo setfacl -R -d -m u:openbased:rX /srv/media   # files added later
+sudo -u openbased ls /srv/media                   # check
+```
+
+Home directories are usually private (`drwx------`), so a folder like `/home/you/Videos` additionally
+needs `sudo setfacl -m u:openbased:x /home/you`. That lets the service pass through the home directory
+without being able to list or read anything else in it. When a library folder cannot be used, the
+server's error names the directory that blocks access and the command to fix it.
 
 To upgrade, build the new version and run `install.sh` again; configuration and data are kept.
 `sudo packaging/linux/uninstall.sh` removes the service (add `--purge` to also delete configuration, data
