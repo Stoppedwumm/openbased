@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenBased</title>
+  <link rel="stylesheet" href="/app/app.css">
+</head>
+<body>
+  <header class="bar">
+    <a class="brand" href="/" data-nav="home">OpenBased</a>
+    <nav id="libraries" class="libraries"></nav>
+    <form id="search" class="search" role="search">
+      <input type="search" name="q" placeholder="Search" aria-label="Search media">
+    </form>
+    <div class="account">
+      <span id="user"></span>
+      <button id="manage" class="ghost" hidden>Manage</button>
+      <button id="logout" class="ghost">Sign out</button>
+    </div>
+  </header>
+
+  <main id="main">
+    <p class="status">Signing in…</p>
+  </main>
+
+  <dialog id="player-dialog" class="player-dialog">
+    <div class="player-head">
+      <strong id="player-title"></strong>
+      <span id="player-mode" class="badge"></span>
+      <button id="player-close" class="ghost" aria-label="Close">✕</button>
+    </div>
+    <video id="player" controls playsinline></video>
+  </dialog>
+
+  <script src="/app/app.js" type="module"></script>
+</body>
+</html>

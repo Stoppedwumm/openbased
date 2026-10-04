@@ -1,0 +1,194 @@
+:root {
+  --bg: #f6f6f4;
+  --surface: #ffffff;
+  --text: #1c1c1a;
+  --muted: #6b6b66;
+  --border: #e2e2dd;
+  --accent: #2f5bd3;
+  --danger: #b3261e;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121212;
+    --surface: #1c1c1c;
+    --text: #ececea;
+    --muted: #9a9a95;
+    --border: #2c2c2a;
+    --accent: #7d9cff;
+    --danger: #ff8a80;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+button, input, select {
+  font: inherit;
+  color: inherit;
+}
+button {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+button.ghost {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+button:disabled { opacity: .5; cursor: default; }
+input, select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.brand {
+  font-weight: 700;
+  color: var(--text);
+  text-decoration: none;
+}
+.libraries {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.libraries a {
+  color: var(--muted);
+  text-decoration: none;
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+.libraries a.active, .libraries a:hover {
+  color: var(--text);
+  background: var(--bg);
+}
+.search { flex: 1; min-width: 140px; }
+.search input { width: 100%; max-width: 320px; }
+.account {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+}
+main {
+  padding: 16px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+h2 {
+  font-size: 18px;
+  margin: 8px 0 12px;
+}
+.status { color: var(--muted); }
+.error { color: var(--danger); }
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 16px;
+  margin-bottom: 28px;
+}
+.card {
+  background: none;
+  color: var(--text);
+  padding: 0;
+  text-align: left;
+  border-radius: 8px;
+}
+.poster {
+  aspect-ratio: 2 / 3;
+  border-radius: 8px;
+  background: var(--surface) center / cover no-repeat;
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 32px;
+  position: relative;
+  overflow: hidden;
+}
+.progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 4px;
+  background: var(--accent);
+}
+.card-title {
+  margin-top: 6px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card-sub { color: var(--muted); font-size: 13px; }
+.detail {
+  display: grid;
+  grid-template-columns: minmax(160px, 260px) 1fr;
+  gap: 24px;
+}
+@media (max-width: 640px) {
+  .detail { grid-template-columns: 1fr; }
+}
+.detail h1 { margin: 0 0 4px; font-size: 26px; }
+.meta { color: var(--muted); margin-bottom: 12px; }
+.actions { display: flex; gap: 8px; margin: 16px 0; flex-wrap: wrap; }
+.files { color: var(--muted); font-size: 13px; }
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.panel form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.panel form input[name=path] { flex: 1; min-width: 220px; }
+table { width: 100%; border-collapse: collapse; }
+td, th { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--border); }
+.badge {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.player-dialog {
+  width: min(1100px, 96vw);
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: #000;
+  color: #fff;
+}
+.player-dialog::backdrop { background: rgba(0, 0, 0, .7); }
+.player-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 12px;
+}
+.player-head strong { flex: 1; }
+.player-head .ghost { color: #fff; border-color: #444; }
+#player { width: 100%; max-height: 80vh; display: block; background: #000; }
+h2 a { color: inherit; text-decoration: none; }
+h2 a:hover { text-decoration: underline; }

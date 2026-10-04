@@ -124,8 +124,12 @@ public class SecurityConfig {
     SecurityFilterChain signInChain(HttpSecurity http) throws Exception {
         http.authorizeHttpRequests(authorize -> authorize
                         .requestMatchers("/login", "/error", "/swagger-ui/**", "/swagger-ui.html", "/favicon.ico").permitAll()
+                        // The web UI is a static client of the public API; it authenticates with OAuth2 like any other.
+                        .requestMatchers("/", "/index.html", "/callback", "/app/**").permitAll()
                         .anyRequest().authenticated())
-                .formLogin(Customizer.withDefaults());
+                .formLogin(Customizer.withDefaults())
+                // The web UI renews tokens by loading its own /callback page in a same-origin iframe.
+                .headers(headers -> headers.frameOptions(frame -> frame.sameOrigin()));
         return http.build();
     }
 

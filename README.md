@@ -15,6 +15,11 @@ mvn package
 java -jar target/openbased-0.1.0-SNAPSHOT.jar
 ```
 
+Open http://localhost:8080/ for the web UI. It is a plain client of the API: it signs in through
+`/oauth2/authorize` with PKCE using the `openbased-web` client, so `http://<host>/callback` must be one of
+that client's redirect URIs (and `http://<host>/` a post-logout redirect URI) when you serve it from
+another address.
+
 On first start an `admin` account is created. Its password is taken from
 `openbased.bootstrap.admin-password`, or generated and printed to the log once.
 

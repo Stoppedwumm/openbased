@@ -130,6 +130,18 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void webUiIsServedWithoutAuthentication() throws Exception {
+        for (String path : List.of("/", "/callback?code=x&state=y")) {
+            HttpResponse<String> page = http.send(HttpRequest.newBuilder(uri(path)).build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertThat(page.statusCode()).as(path).isEqualTo(200);
+            assertThat(page.body()).contains("/app/app.js");
+        }
+        assertThat(http.send(HttpRequest.newBuilder(uri("/app/app.js")).build(), HttpResponse.BodyHandlers.ofString())
+                .statusCode()).isEqualTo(200);
+    }
+
+    @Test
     void scanListAndStreamWithRange() throws Exception {
         Path dir = mediaDir("movies-" + System.nanoTime(), "Interstellar (2014).mkv", 5000);
         String libraryId = createLibrary("Movies", dir, true);
