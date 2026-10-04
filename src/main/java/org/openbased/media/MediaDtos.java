@@ -13,13 +13,27 @@ public final class MediaDtos {
         return artworkId == null ? null : "/api/v1/artwork/" + artworkId;
     }
 
+    /** The current user's playback state; positions and durations in seconds. */
+    public record UserProgress(double position, Double duration, boolean completed) {
+    }
+
+    /**
+     * @param progress the caller's progress, present only for tokens with {@code history.read} and only
+     *        once the item has been played
+     */
     public record MediaSummary(String id, String libraryId, MediaType type, String title, Integer year, Long duration,
-            String poster, String seriesTitle, Integer seasonNumber, Integer episodeNumber) {
+            Integer runtime, String overview, List<String> genres, String poster, String backdrop, String seriesTitle,
+            Integer seasonNumber, Integer episodeNumber, UserProgress progress) {
 
         public static MediaSummary of(MediaItem m) {
+            return of(m, null);
+        }
+
+        public static MediaSummary of(MediaItem m, UserProgress progress) {
             return new MediaSummary(m.getId(), m.getLibraryId(), m.getType(), m.getTitle(), m.getYear(),
-                    m.getDuration(), artworkUrl(m.getPosterId()), m.getSeriesTitle(), m.getSeasonNumber(),
-                    m.getEpisodeNumber());
+                    m.getDuration(), m.getRuntime(), m.getOverview(), List.copyOf(m.getGenres()),
+                    artworkUrl(m.getPosterId()), artworkUrl(m.getBackdropId()), m.getSeriesTitle(),
+                    m.getSeasonNumber(), m.getEpisodeNumber(), progress);
         }
     }
 
@@ -38,15 +52,15 @@ public final class MediaDtos {
     public record MediaDetail(String id, String libraryId, MediaType type, String title, String originalTitle,
             Integer year, String overview, List<String> genres, Integer runtime, Long duration,
             Map<String, String> externalIds, ArtworkLinks artwork, String seriesTitle, Integer seasonNumber,
-            Integer episodeNumber, List<FileInfo> files) {
+            Integer episodeNumber, List<FileInfo> files, UserProgress progress) {
 
-        public static MediaDetail of(MediaItem m, List<MediaFile> files) {
+        public static MediaDetail of(MediaItem m, List<MediaFile> files, UserProgress progress) {
             return new MediaDetail(m.getId(), m.getLibraryId(), m.getType(), m.getTitle(), m.getOriginalTitle(),
                     m.getYear(), m.getOverview(), List.copyOf(m.getGenres()), m.getRuntime(), m.getDuration(),
                     Map.copyOf(m.getExternalIds()),
                     new ArtworkLinks(artworkUrl(m.getPosterId()), artworkUrl(m.getBackdropId())),
                     m.getSeriesTitle(), m.getSeasonNumber(), m.getEpisodeNumber(),
-                    files.stream().map(FileInfo::of).toList());
+                    files.stream().map(FileInfo::of).toList(), progress);
         }
     }
 

@@ -5,6 +5,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 
 import org.openbased.common.ApiException;
 import org.openbased.common.Paging;
+import org.openbased.progress.ProgressLookup;
 import org.openbased.security.AccessService;
 import org.openbased.security.Scopes;
 import org.springframework.data.domain.Page;
@@ -20,10 +21,12 @@ public class SearchController {
 
     private final MediaItemRepository items;
     private final AccessService access;
+    private final ProgressLookup progress;
 
-    public SearchController(MediaItemRepository items, AccessService access) {
+    public SearchController(MediaItemRepository items, AccessService access, ProgressLookup progress) {
         this.items = items;
         this.access = access;
+        this.progress = progress;
     }
 
     @GetMapping
@@ -39,7 +42,9 @@ public class SearchController {
         Page<MediaItem> result = items.findAll(
                 MediaController.filter(access.accessibleLibraryIds(), type, q, null, null),
                 Paging.of(page, pageSize, MediaController.sort(null)));
-        return new MediaDtos.SearchResults(result.getContent().stream().map(MediaDtos.MediaSummary::of).toList(),
+        var progressById = progress.forCurrentUser(result.getContent().stream().map(MediaItem::getId).toList());
+        return new MediaDtos.SearchResults(result.getContent().stream()
+                .map(m -> MediaDtos.MediaSummary.of(m, progressById.get(m.getId()))).toList(),
                 result.getNumber(), result.getSize(), result.getTotalElements());
     }
 }

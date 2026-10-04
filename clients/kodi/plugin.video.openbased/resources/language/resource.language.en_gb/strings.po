@@ -1,0 +1,31 @@
+# Kodi Media Center language file
+# Addon Name: OpenBased
+# Addon id: plugin.video.openbased
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: en_GB\n"
+
+msgctxt "#30000"
+msgid "Server"
+msgstr ""
+
+msgctxt "#30001"
+msgid "Server address (e.g. http://bigbox:8080)"
+msgstr ""
+
+msgctxt "#30002"
+msgid "Link with OpenBased"
+msgstr ""
+
+msgctxt "#30003"
+msgid "Access token (set automatically by linking, or paste an ob_pat_ token)"
+msgstr ""
+
+msgctxt "#30004"
+msgid "Linked as"
+msgstr ""
+
+msgctxt "#30005"
+msgid "Sign out"
+msgstr ""

@@ -171,6 +171,14 @@ class ApiIntegrationTest {
         Response progress = call("PUT", "/api/v1/media/" + mediaId + "/progress", admin,
                 Map.of("position", 1532, "duration", 7200, "completed", false));
         assertThat(progress.json().path("position").asDouble()).isEqualTo(1532);
+        JsonNode listed = call("GET", "/api/v1/media?library=" + libraryId, admin, null).json().path("items").get(0);
+        assertThat(listed.path("progress").path("position").asDouble()).isEqualTo(1532);
+        assertThat(listed.path("progress").path("completed").asBoolean()).isFalse();
+        assertThat(call("GET", "/api/v1/media/" + mediaId, admin, null).json().path("progress").path("duration")
+                .asDouble()).isEqualTo(7200);
+        // Tokens without history.read do not see progress.
+        assertThat(call("GET", "/api/v1/media/" + mediaId, token("admin-svc", "media.read"), null).json()
+                .path("progress").isNull()).isTrue();
         Response cont = call("GET", "/api/v1/continue-watching", admin, null);
         assertThat(cont.json().path("items").findValuesAsText("mediaId")).contains(mediaId);
 
@@ -232,6 +240,47 @@ class ApiIntegrationTest {
         Response revoked = call("GET", "/api/v1/media", pat, null);
         assertThat(revoked.status()).isEqualTo(401);
         assertThat(revoked.json().path("error").asText()).isEqualTo("INVALID_TOKEN");
+    }
+
+    @Test
+    void deviceLinking() throws Exception {
+        Response started = call("POST", "/api/v1/device-links", null, Map.of("name", "Kodi (living room)"));
+        assertThat(started.status()).isEqualTo(201);
+        String deviceCode = started.json().path("deviceCode").asText();
+        String userCode = started.json().path("userCode").asText();
+        assertThat(userCode).matches("[A-Z]{4}-[A-Z]{4}");
+        assertThat(started.json().path("verificationUriComplete").asText()).endsWith("/#/link/" + userCode);
+
+        Response pending = call("POST", "/api/v1/device-links/token", null, Map.of("deviceCode", deviceCode));
+        assertThat(pending.json().path("status").asText()).isEqualTo("PENDING");
+        assertThat(call("GET", "/api/v1/device-links/" + userCode, null, null).status()).isEqualTo(401);
+
+        Response shown = call("GET", "/api/v1/device-links/" + userCode.toLowerCase().replace("-", "%20"), admin, null);
+        assertThat(shown.json().path("name").asText()).isEqualTo("Kodi (living room)");
+        assertThat(call("POST", "/api/v1/device-links/" + userCode + "/approve", admin, null).status()).isEqualTo(200);
+
+        Response approved = call("POST", "/api/v1/device-links/token", null, Map.of("deviceCode", deviceCode));
+        assertThat(approved.json().path("status").asText()).isEqualTo("APPROVED");
+        String token = approved.json().path("token").asText();
+        assertThat(token).startsWith("ob_pat_");
+        assertThat(call("GET", "/api/v1/media", token, null).status()).isEqualTo(200);
+        assertThat(call("GET", "/api/v1/continue-watching", token, null).status()).isEqualTo(200);
+        assertThat(call("GET", "/api/v1/tokens", token, null).status()).isEqualTo(403);
+
+        // The token is handed out once.
+        assertThat(call("POST", "/api/v1/device-links/token", null, Map.of("deviceCode", deviceCode)).status())
+                .isEqualTo(404);
+        assertThat(call("GET", "/api/v1/tokens", admin, null).json().path("items").findValuesAsText("name"))
+                .contains("Kodi (living room)");
+
+        Response declined = call("POST", "/api/v1/device-links", null, Map.of("name", "Unknown TV"));
+        String declinedCode = declined.json().path("userCode").asText();
+        assertThat(call("POST", "/api/v1/device-links/" + declinedCode + "/deny", admin, null).status()).isEqualTo(204);
+        Response denied = call("POST", "/api/v1/device-links/token", null,
+                Map.of("deviceCode", declined.json().path("deviceCode").asText()));
+        assertThat(denied.status()).isEqualTo(403);
+        assertThat(denied.json().path("error").asText()).isEqualTo("DEVICE_LINK_DENIED");
+        assertThat(call("GET", "/api/v1/device-links/BBBB-BBBB", admin, null).status()).isEqualTo(404);
     }
 
     @Test

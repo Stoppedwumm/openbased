@@ -3,6 +3,7 @@ package org.openbased.media;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import jakarta.persistence.criteria.Predicate;
@@ -12,6 +13,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 
 import org.openbased.common.ApiException;
 import org.openbased.common.PageResponse;
+import org.openbased.progress.ProgressLookup;
 import org.openbased.common.Paging;
 import org.openbased.security.AccessService;
 import org.openbased.security.Scopes;
@@ -36,13 +38,15 @@ public class MediaController {
     private final MediaFileRepository files;
     private final MediaLookup lookup;
     private final AccessService access;
+    private final ProgressLookup progress;
 
     public MediaController(MediaItemRepository items, MediaFileRepository files, MediaLookup lookup,
-            AccessService access) {
+            AccessService access, ProgressLookup progress) {
         this.items = items;
         this.files = files;
         this.lookup = lookup;
         this.access = access;
+        this.progress = progress;
     }
 
     @GetMapping("/media")
@@ -60,7 +64,10 @@ public class MediaController {
         Set<String> libraryIds = library != null ? Set.of(access.library(library).getId())
                 : access.accessibleLibraryIds();
         Specification<MediaItem> spec = filter(libraryIds, type, query, year, genre);
-        return PageResponse.of(items.findAll(spec, Paging.of(page, pageSize, sort(sort))), MediaDtos.MediaSummary::of);
+        org.springframework.data.domain.Page<MediaItem> result = items.findAll(spec, Paging.of(page, pageSize, sort(sort)));
+        Map<String, MediaDtos.UserProgress> progressById =
+                progress.forCurrentUser(result.getContent().stream().map(MediaItem::getId).toList());
+        return PageResponse.of(result, m -> MediaDtos.MediaSummary.of(m, progressById.get(m.getId())));
     }
 
     @GetMapping("/media/{mediaId}")
@@ -68,7 +75,8 @@ public class MediaController {
     public MediaDtos.MediaDetail get(@PathVariable String mediaId) {
         access.require(Scopes.MEDIA_READ);
         MediaItem item = lookup.media(mediaId);
-        return MediaDtos.MediaDetail.of(item, files.findByMediaIdOrderByIdAsc(item.getId()));
+        return MediaDtos.MediaDetail.of(item, files.findByMediaIdOrderByIdAsc(item.getId()),
+                progress.forCurrentUser(List.of(item.getId())).get(item.getId()));
     }
 
     @GetMapping("/media/{mediaId}/stream")

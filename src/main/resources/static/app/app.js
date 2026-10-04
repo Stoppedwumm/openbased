@@ -480,6 +480,59 @@ async function viewManage() {
     h('div', { class: 'panel' }, form));
 }
 
+// ---------------------------------------------------------------- device linking
+
+async function viewLink(prefilled) {
+  markActiveLibrary(null);
+  const message = h('p', { class: 'status' });
+  const input = h('input', {
+    name: 'code', placeholder: 'XXXX-XXXX', required: true, autocomplete: 'off', autocapitalize: 'characters',
+    value: prefilled ? decodeURIComponent(prefilled) : null, style: 'font-size:20px;letter-spacing:2px;width:12ch',
+  });
+  const panel = h('div', { class: 'panel' });
+
+  const lookup = async (event) => {
+    event?.preventDefault();
+    message.textContent = '';
+    message.className = 'status';
+    let link;
+    try {
+      link = await api(`/device-links/${encodeURIComponent(input.value.trim())}`);
+    } catch (error) {
+      message.textContent = error.message;
+      message.className = 'error';
+      return;
+    }
+    const decide = async (action) => {
+      try {
+        await api(`/device-links/${encodeURIComponent(link.userCode)}/${action}`, { method: 'POST' });
+        panel.replaceChildren(h('p', {}, action === 'approve'
+          ? `“${link.name}” is now linked to your account. It will continue on its own in a few seconds.`
+          : `Linking “${link.name}” was declined.`),
+        action === 'approve' ? h('p', { class: 'status' }, 'You can revoke its access at any time on the API tokens page.') : null);
+      } catch (error) {
+        message.textContent = error.message;
+        message.className = 'error';
+      }
+    };
+    panel.replaceChildren(
+      h('p', {}, h('strong', {}, link.name), ` wants to use OpenBased as ${$('#user').textContent || 'you'}.`),
+      h('p', { class: 'status' }, `It will be able to: browse your libraries, play media and read and update your `
+        + `watch progress (${link.scopes.join(', ')}). Only approve a code shown on your own device.`),
+      h('div', { class: 'actions' },
+        h('button', { onclick: () => decide('approve') }, 'Approve'),
+        h('button', { class: 'ghost', onclick: () => decide('deny') }, 'Decline')),
+      message);
+  };
+
+  panel.append(
+    h('p', {}, 'Enter the code shown on your TV or media player.'),
+    h('form', { onsubmit: lookup }, input, h('button', { type: 'submit' }, 'Continue')),
+    message);
+  show(h('h2', {}, 'Link a device'), panel);
+  if (prefilled) lookup();
+}
+
 // ---------------------------------------------------------------- api tokens
 
 const TOKEN_LIFETIMES = [['30 days', 30], ['90 days', 90], ['1 year', 365]];
@@ -570,6 +623,7 @@ async function viewTokens(created) {
   }
 
   show(
+    h('div', { class: 'actions' }, h('button', { class: 'ghost', onclick: () => go('#/link') }, 'Link a TV or media player')),
     h('h2', {}, 'API tokens'),
     h('p', { class: 'status' }, 'Personal access tokens let scripts and other tools use the API as you. '
       + 'A token can only have permissions you have yourself.'),
@@ -707,6 +761,7 @@ async function route() {
     else if (view === 'search') await viewSearch(decodeURIComponent(id || ''));
     else if (view === 'manage' && hasScope('library.write')) await viewManage();
     else if (view === 'tokens' && hasScope('profile')) await viewTokens();
+    else if (view === 'link' && hasScope('profile')) await viewLink(id);
     else await viewHome();
   } catch (error) {
     showError(error);

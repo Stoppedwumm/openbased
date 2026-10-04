@@ -107,6 +107,16 @@ The integration tests start the server on a random port and drive it over HTTP a
 OAuth2 token issuance, scans, Range streaming, resumable uploads, events, personal access tokens,
 library isolation between users and the plugin lifecycle.
 
+## Clients
+
+- **Web UI** at `/`, built into the server.
+- **Kodi** add-on in [`clients/kodi`](clients/kodi/README.md), linked to an account with a short code.
+
+Devices without a keyboard can use the same linking flow (`POST /api/v1/device-links`, show the
+`userCode`, poll `POST /api/v1/device-links/token`); the user approves the code on the web UI's
+**Link a device** page (`/#/link`) and the device receives a personal access token restricted to
+browsing, playback and watch history.
+
 ## Authentication and authorization
 
 | Flow | Use |

@@ -106,6 +106,8 @@ public class SecurityConfig {
                 .requestCache(cache -> cache.disable())
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(HttpMethod.OPTIONS, "/api/**").permitAll()
+                        // Devices start linking and poll for their token before they have credentials.
+                        .requestMatchers(HttpMethod.POST, "/api/v1/device-links", "/api/v1/device-links/token").permitAll()
                         .requestMatchers("/api/v1/openapi.json", "/api/v1/openapi.json/**", "/api/v1/docs",
                                 "/api/v1/docs/**", "/api/v1/swagger-ui/**").permitAll()
                         .anyRequest().authenticated())

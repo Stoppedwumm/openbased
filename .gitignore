@@ -3,3 +3,5 @@ data/
 *.iml
 .idea/
 .vscode/
+clients/kodi/dist/
+__pycache__/

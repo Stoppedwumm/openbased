@@ -13,6 +13,8 @@ public interface PlaybackProgressRepository extends JpaRepository<PlaybackProgre
 
     Optional<PlaybackProgress> findByUserIdAndMediaId(String userId, String mediaId);
 
+    java.util.List<PlaybackProgress> findByUserIdAndMediaIdIn(String userId, Collection<String> mediaIds);
+
     @Query("""
             select p from PlaybackProgress p
             where p.userId = :userId and p.completed = false and p.position > 0
