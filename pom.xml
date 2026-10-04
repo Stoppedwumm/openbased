@@ -80,6 +80,27 @@
         </dependency>
     </dependencies>
 
+    <profiles>
+        <!--
+          javac's release option needs lib/ct.sym, which some JDK packages (e.g. on Debian and Raspberry
+          Pi OS) leave out; javac then fails with "release version N not supported". Fall back to
+          source/target there. The JDK running Maven must be 17 or newer either way.
+        -->
+        <profile>
+            <id>jdk-without-ct-sym</id>
+            <activation>
+                <file>
+                    <missing>${java.home}/lib/ct.sym</missing>
+                </file>
+            </activation>
+            <properties>
+                <maven.compiler.release></maven.compiler.release>
+                <maven.compiler.source>${java.version}</maven.compiler.source>
+                <maven.compiler.target>${java.version}</maven.compiler.target>
+            </properties>
+        </profile>
+    </profiles>
+
     <build>
         <plugins>
             <plugin>
