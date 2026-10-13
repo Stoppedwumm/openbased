@@ -12,7 +12,9 @@ import jakarta.validation.constraints.Size;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
+import org.openbased.common.ApiException;
 import org.openbased.security.AccessService;
+import org.openbased.security.ApiPrincipal;
 import org.openbased.security.Scopes;
 import org.openbased.user.User;
 import org.springframework.http.HttpStatus;
@@ -75,6 +77,22 @@ public class TokenController {
         ApiToken t = created.token();
         return ResponseEntity.status(HttpStatus.CREATED).body(new CreatedToken(t.getId(), t.getName(),
                 t.getScopes(), created.plaintext(), t.getCreatedAt(), t.getExpiresAt()));
+    }
+
+    /**
+     * Lets a personal access token revoke itself, e.g. when an app signs out. Needs no scope: holding the
+     * token is enough to give it up. Literal paths take precedence over {@code /{tokenId}}.
+     */
+    @DeleteMapping("/current")
+    @Operation(summary = "Revoke the personal access token used for this request (sign out)")
+    public ResponseEntity<Void> revokeCurrent() {
+        ApiPrincipal principal = access.principal();
+        if (principal.tokenType() != ApiPrincipal.TokenType.PERSONAL) {
+            throw ApiException.badRequest("Only personal access tokens can revoke themselves. "
+                    + "OAuth2 access tokens expire on their own.");
+        }
+        tokens.revoke(principal.userId(), principal.tokenId());
+        return ResponseEntity.noContent().build();
     }
 
     @DeleteMapping("/{tokenId}")

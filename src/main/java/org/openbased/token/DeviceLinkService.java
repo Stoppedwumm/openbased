@@ -63,6 +63,7 @@ public class DeviceLinkService {
         private volatile String token;
         private volatile Instant tokenExpiresAt;
         private volatile String userName;
+        private volatile String tokenId;
 
         Link(String userCode, String deviceCode, String name) {
             this.userCode = userCode;
@@ -79,6 +80,7 @@ public class DeviceLinkService {
         public String token() { return token; }
         public Instant tokenExpiresAt() { return tokenExpiresAt; }
         public String userName() { return userName; }
+        public String tokenId() { return tokenId; }
 
         boolean isExpired() {
             return Instant.now().isAfter(expiresAt);
@@ -147,6 +149,7 @@ public class DeviceLinkService {
         link.token = created.plaintext();
         link.tokenExpiresAt = created.token().getExpiresAt();
         link.userName = user.getDisplayName();
+        link.tokenId = created.token().getId();
         link.status = Status.APPROVED;
         byUserCode.remove(link.userCode());
         return link;

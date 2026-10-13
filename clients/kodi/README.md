@@ -32,7 +32,8 @@ A Kodi video add-on (`plugin.video.openbased`) for Kodi 19 "Matrix" and newer, o
    (`http://bigbox:8080/#/link`), sign in, enter the code and approve.
 
 Kodi receives a personal access token that can only browse, play and update watch progress. It appears
-as "Kodi on <device name>" on the web UI's **API tokens** page, where you can revoke it. The add-on's
+as "Kodi on <device name>" on the web UI's **API tokens** page, where you can revoke it. Signing out
+in the add-on's settings revokes it on the server as well. The add-on's
 settings also accept a manually created `ob_pat_…` token.
 
 ## Development

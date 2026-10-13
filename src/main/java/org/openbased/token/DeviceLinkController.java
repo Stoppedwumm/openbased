@@ -53,8 +53,12 @@ public class DeviceLinkController {
     public record PollRequest(@NotBlank String deviceCode) {
     }
 
-    /** @param user display name of the account the device was linked to */
-    public record PollResponse(DeviceLinkService.Status status, String token, Instant expiresAt, String user) {
+    /**
+     * @param tokenId ID of the issued token, as listed by {@code GET /api/v1/tokens}
+     * @param user display name of the account the device was linked to
+     */
+    public record PollResponse(DeviceLinkService.Status status, String token, String tokenId, Instant expiresAt,
+            String user) {
     }
 
     public record PendingLink(String userCode, String name, Instant createdAt, List<String> scopes) {
@@ -76,9 +80,9 @@ public class DeviceLinkController {
     public PollResponse poll(@Valid @RequestBody PollRequest request) {
         DeviceLinkService.Link link = links.poll(request.deviceCode());
         return switch (link.status()) {
-            case PENDING -> new PollResponse(DeviceLinkService.Status.PENDING, null, null, null);
+            case PENDING -> new PollResponse(DeviceLinkService.Status.PENDING, null, null, null, null);
             case APPROVED -> new PollResponse(DeviceLinkService.Status.APPROVED, link.token(),
-                    link.tokenExpiresAt(), link.userName());
+                    link.tokenId(), link.tokenExpiresAt(), link.userName());
             case DENIED -> throw ApiException.forbidden("DEVICE_LINK_DENIED", "Linking was declined.");
         };
     }

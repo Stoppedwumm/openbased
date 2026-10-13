@@ -58,6 +58,10 @@ class Client:
     def poll_link(self, device_code):
         return self.request("POST", "/device-links/token", {"deviceCode": device_code}, auth=False)
 
+    def revoke_current_token(self):
+        """Revokes the token used by this client (sign out)."""
+        return self.request("DELETE", "/tokens/current")
+
     # -- browsing
 
     def libraries(self):

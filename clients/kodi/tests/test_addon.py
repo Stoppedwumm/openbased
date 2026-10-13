@@ -40,6 +40,26 @@ def api(method, path, body=None, token=ADMIN_TOKEN):
         return json.loads(raw) if raw else None
 
 
+def link_device():
+    """Runs the add-on's link action, approving the code shown as the admin would on their phone."""
+    approved = []
+
+    def approve(message):
+        code = re.search(r"[A-Z]{4}-[A-Z]{4}", message).group(0)
+        if not approved:
+            approved.append(code)
+            api("POST", "/device-links/%s/approve" % code)
+
+    xbmcgui.DialogProgress.on_update = approve
+    plugin.run([BASE, "-1", "?action=link"])
+    xbmcgui.DialogProgress.on_update = None
+    return xbmcaddon.settings.get("token")
+
+
+def device_tokens():
+    return [t for t in api("GET", "/tokens")["items"] if t["name"] == "Kodi on TestBox"]
+
+
 def browse(query=""):
     xbmcplugin.reset()
     plugin.run([BASE, "1", query])
@@ -66,18 +86,7 @@ class AddonTest(unittest.TestCase):
     def setUpClass(cls):
         xbmcaddon.settings.clear()
         xbmcaddon.settings["server_url"] = SERVER
-        approved = []
-
-        def approve(message):
-            code = re.search(r"[A-Z]{4}-[A-Z]{4}", message).group(0)
-            if not approved:
-                approved.append(code)
-                api("POST", "/device-links/%s/approve" % code)
-
-        xbmcgui.DialogProgress.on_update = approve
-        plugin.run([BASE, "-1", "?action=link"])
-        xbmcgui.DialogProgress.on_update = None
-        cls.token = xbmcaddon.settings.get("token")
+        cls.token = link_device()
 
     def setUp(self):
         xbmcgui.KODI_MAJOR = 21
@@ -188,19 +197,24 @@ class AddonTest(unittest.TestCase):
         self.assertTrue(api("GET", "/media/%s/progress" % media_id)["completed"])
         xbmc.player_state.update(playing=False)
 
-    def test_zz_revoked_token_and_sign_out(self):
-        # Revoking the device in the web UI makes the add-on ask to link again.
-        token_id = [t["id"] for t in api("GET", "/tokens")["items"] if t["name"] == "Kodi on TestBox"][0]
-        api("DELETE", "/tokens/" + token_id)
+    def test_zz_sign_out_and_revoked_token(self):
+        # Signing out revokes the device's token on the server.
+        self.assertEqual(len(device_tokens()), 1)
+        plugin.run([BASE, "-1", "?action=signout"])
+        self.assertEqual(xbmcaddon.settings["token"], "")
+        self.assertEqual(device_tokens(), [])
+        self.assertEqual([e["item"].label for e in browse()], ["Link with OpenBased", "Settings"])
+
+        # A token revoked elsewhere (web UI) makes the add-on ask to link again.
+        self.assertTrue(link_device().startswith("ob_pat_"))
+        api("DELETE", "/tokens/" + device_tokens()[0]["id"])
         xbmcgui.notifications.clear()
         browse()
         self.assertIn("Link this device again", xbmcgui.notifications[-1])
         self.assertFalse(xbmcplugin.state["ended"])
-
+        # Signing out still works locally when the server already revoked the token.
         plugin.run([BASE, "-1", "?action=signout"])
         self.assertEqual(xbmcaddon.settings["token"], "")
-        self.assertEqual([e["item"].label for e in browse()], ["Link with OpenBased", "Settings"])
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

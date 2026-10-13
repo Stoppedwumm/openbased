@@ -267,11 +267,18 @@ class ApiIntegrationTest {
         assertThat(call("GET", "/api/v1/continue-watching", token, null).status()).isEqualTo(200);
         assertThat(call("GET", "/api/v1/tokens", token, null).status()).isEqualTo(403);
 
+        assertThat(approved.json().path("tokenId").asText()).startsWith("token_");
         // The token is handed out once.
         assertThat(call("POST", "/api/v1/device-links/token", null, Map.of("deviceCode", deviceCode)).status())
                 .isEqualTo(404);
         assertThat(call("GET", "/api/v1/tokens", admin, null).json().path("items").findValuesAsText("name"))
                 .contains("Kodi (living room)");
+        // Signing out on the device revokes its own token, without needing the profile scope.
+        assertThat(call("DELETE", "/api/v1/tokens/current", token, null).status()).isEqualTo(204);
+        assertThat(call("GET", "/api/v1/media", token, null).status()).isEqualTo(401);
+        assertThat(call("GET", "/api/v1/tokens", admin, null).json().path("items").findValuesAsText("name"))
+                .doesNotContain("Kodi (living room)");
+        assertThat(call("DELETE", "/api/v1/tokens/current", admin, null).status()).isEqualTo(400);
 
         Response declined = call("POST", "/api/v1/device-links", null, Map.of("name", "Unknown TV"));
         String declinedCode = declined.json().path("userCode").asText();

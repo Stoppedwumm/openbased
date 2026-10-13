@@ -248,10 +248,14 @@ class Plugin:
             progress.close()
 
     def action_signout(self):
-        if not xbmcgui.Dialog().yesno(ADDON_NAME, "Sign out of OpenBased on this device?[CR]"
-                                      "To revoke its access completely, also remove its token in the "
-                                      "OpenBased web UI (API tokens)."):
+        if not xbmcgui.Dialog().yesno(ADDON_NAME, "Sign out of OpenBased on this device?"):
             return
+        if self.is_linked():
+            try:
+                self.client().revoke_current_token()
+            except ApiError as e:
+                # Already revoked (401) or unreachable: sign out locally regardless.
+                xbmc.log("[OpenBased] could not revoke token on sign out: %s" % e, xbmc.LOGWARNING)
         ADDON.setSetting("token", "")
         ADDON.setSetting("linked_as", "")
         notify("Signed out")

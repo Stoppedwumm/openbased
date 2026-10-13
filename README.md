@@ -115,7 +115,8 @@ library isolation between users and the plugin lifecycle.
 Devices without a keyboard can use the same linking flow (`POST /api/v1/device-links`, show the
 `userCode`, poll `POST /api/v1/device-links/token`); the user approves the code on the web UI's
 **Link a device** page (`/#/link`) and the device receives a personal access token restricted to
-browsing, playback and watch history.
+browsing, playback and watch history, together with its `tokenId`. To sign out, a device revokes its own
+token with `DELETE /api/v1/tokens/current`; this works with any personal access token and needs no scope.
 
 ## Authentication and authorization
 
