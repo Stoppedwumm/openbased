@@ -40,7 +40,7 @@ public class SearchController {
             throw ApiException.badRequest("q must not be blank");
         }
         Page<MediaItem> result = items.findAll(
-                MediaController.filter(access.accessibleLibraryIds(), type, q, null, null),
+                MediaController.filter(access.accessibleLibraryIds(), type, q, null, null, null),
                 Paging.of(page, pageSize, MediaController.sort(null)));
         var progressById = progress.forCurrentUser(result.getContent().stream().map(MediaItem::getId).toList());
         return new MediaDtos.SearchResults(result.getContent().stream()

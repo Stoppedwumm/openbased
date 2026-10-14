@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -136,7 +137,8 @@ public class LibraryScanner {
         Instant modified;
         try {
             size = Files.size(normalized);
-            modified = Files.getLastModifiedTime(normalized).toInstant();
+            // The database keeps microseconds at most; compare at that precision, or every scan sees a change.
+            modified = Files.getLastModifiedTime(normalized).toInstant().truncatedTo(ChronoUnit.MILLIS);
         } catch (IOException e) {
             throw new IllegalStateException("Cannot read " + normalized, e);
         }
@@ -233,9 +235,16 @@ public class LibraryScanner {
             }
         }
         for (String mediaId : affected) {
-            if (files.countByMediaId(mediaId) == 0) {
-                items.findById(mediaId).ifPresent(item -> mediaService.remove(item, false));
-            }
+            items.findById(mediaId).ifPresent(item -> {
+                if (files.countByMediaId(mediaId) == 0) {
+                    mediaService.remove(item, false);
+                } else {
+                    // One of several files is gone: the item's file list changed.
+                    item.setUpdatedAt(Instant.now());
+                    items.save(item);
+                    events.publishForLibrary(EventType.MEDIA_UPDATED, library.getId(), Map.of("mediaId", mediaId));
+                }
+            });
         }
     }
 

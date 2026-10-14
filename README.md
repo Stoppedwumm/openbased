@@ -93,6 +93,7 @@ The important ones:
 | `openbased.rate-limit.*` | Requests per window per user/client/IP. |
 | `openbased.uploads.*` | Chunk size, maximum size, allowed extensions. |
 | `openbased.playback.*` | ffmpeg/ffprobe paths, idle timeout for playback sessions. |
+| `openbased.sync.retention` | How long removed media IDs are kept for incremental sync (default 90 days). |
 | `openbased.roles.user` | Permissions of the `USER` role (defaults below); e.g. remove `media.download` to allow streaming but not downloads. |
 | `openbased.metadata.tmdb.api-key` | Enables the built-in TMDB metadata provider (or set `TMDB_API_KEY`). |
 
@@ -190,6 +191,7 @@ timeout, or on restart.
 | `POST /api/v1/users`, `PATCH /api/v1/users/{id}` | `users.write` |
 | `GET /api/v1/libraries`, `GET /api/v1/libraries/{id}` | `library.read` |
 | `POST /api/v1/libraries`, `PATCH`/`DELETE /api/v1/libraries/{id}`, `POST /api/v1/libraries/{id}/scan` | `library.write` |
+| `GET /api/v1/media/removed` | `media.read` |
 | `GET /api/v1/media`, `GET /api/v1/media/{id}`, `GET /api/v1/search`, `GET /api/v1/artwork/{id}` | `media.read` |
 | `GET /api/v1/metadata/search` | `media.read` |
 | `POST /api/v1/media/{id}/metadata/refresh` | `library.write` |
@@ -244,6 +246,23 @@ is applied.
 - `TRANSCODE`: re-encoded to H.264/AAC in MP4, or VP9/Opus in WebM.
 
 Remuxed and transcoded streams do not support `Range`; seek with `?start=<seconds>`.
+
+### Incremental sync
+
+Clients that keep a copy of the catalogue (for example for offline use) sync changes instead of reloading it:
+
+1. `GET /api/v1/media/removed?since=<last syncedAt>` lists the IDs of media removed since then (`items` of
+   `mediaId`, `removedAt`; paged) and returns `syncedAt` to store for next time.
+2. If `resetRequired` is true, reload everything: something changed that these lists cannot describe (a
+   library's access changed or it was deleted, the user's administrator access changed, or `since` is older than
+   `openbased.sync.retention`).
+3. Otherwise `GET /api/v1/media?updatedSince=<last syncedAt>` (with the usual paging) returns items added or
+   changed since then.
+
+`syncedAt` is a minute in the past, so changes committed while a sync runs are not missed; an item may be sent
+twice. Use the server's `syncedAt`, never the device's clock. Removals are only listed for libraries the caller
+can see. Playback progress is not part of an item's `updatedAt`; sync it with `/history` and
+`/continue-watching`.
 
 ### Downloads
 

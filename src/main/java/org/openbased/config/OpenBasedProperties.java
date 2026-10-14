@@ -34,6 +34,7 @@ public class OpenBasedProperties {
     private final Jobs jobs = new Jobs();
     private final BuiltinClients builtinClients = new BuiltinClients();
     private final Roles roles = new Roles();
+    private final Sync sync = new Sync();
 
     public String getIssuer() { return issuer; }
     public void setIssuer(String issuer) { this.issuer = issuer.endsWith("/") ? issuer.substring(0, issuer.length() - 1) : issuer; }
@@ -51,6 +52,7 @@ public class OpenBasedProperties {
     public Jobs getJobs() { return jobs; }
     public BuiltinClients getBuiltinClients() { return builtinClients; }
     public Roles getRoles() { return roles; }
+    public Sync getSync() { return sync; }
 
     public Optional<Client> client(String clientId) {
         return clients.stream().filter(c -> c.getClientId().equals(clientId)).findFirst();
@@ -216,6 +218,15 @@ public class OpenBasedProperties {
 
         public Set<String> getUser() { return user; }
         public void setUser(Set<String> user) { this.user = user; }
+    }
+
+    /** Incremental sync of the media catalogue. */
+    public static class Sync {
+        /** Removed media IDs are kept this long; clients that last synced earlier must sync everything again. */
+        private Duration retention = Duration.ofDays(90);
+
+        public Duration getRetention() { return retention; }
+        public void setRetention(Duration retention) { this.retention = retention; }
     }
 
     public static class Jobs {

@@ -365,6 +365,71 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void incrementalSyncReportsChangesAndRemovals() throws Exception {
+        Path dir = mediaDir("sync-" + System.nanoTime(), "Arrival (2016).mkv", 100);
+        Files.write(dir.resolve("Dune (2021).mkv"), new byte[100]);
+        String libraryId = createLibrary("Sync", dir, true);
+        scan(libraryId);
+        Map<String, String> ids = new java.util.HashMap<>();
+        for (JsonNode m : call("GET", "/api/v1/media?library=" + libraryId, admin, null).json().path("items")) {
+            ids.put(m.path("title").asText(), m.path("id").asText());
+        }
+        Path privateDir = mediaDir("sync-private-" + System.nanoTime(), "Memento (2000).mkv", 100);
+        String privateLibrary = createLibrary("Sync private", privateDir, false);
+        scan(privateLibrary);
+        String memento = call("GET", "/api/v1/media?library=" + privateLibrary, admin, null).json().path("items")
+                .get(0).path("id").asText();
+        Thread.sleep(5);
+        Instant since = Instant.now();
+        String bob = token("bob-svc", "media.read library.read");
+
+        assertThat(call("GET", "/api/v1/media?library=" + libraryId + "&updatedSince=" + since, admin, null).json()
+                .path("total").asInt()).isZero();
+        JsonNode nothing = call("GET", "/api/v1/media/removed?since=" + since, admin, null).json();
+        assertThat(nothing.path("resetRequired").asBoolean()).isFalse();
+        assertThat(nothing.path("items").findValuesAsText("mediaId")).doesNotContain(ids.get("Arrival"));
+        assertThat(Instant.parse(nothing.path("syncedAt").asText())).isBefore(Instant.now());
+
+        Files.delete(dir.resolve("Arrival (2016).mkv"));
+        Files.write(dir.resolve("Tenet (2020).mkv"), new byte[100]);
+        scan(libraryId);
+        Files.delete(privateDir.resolve("Memento (2000).mkv"));
+        scan(privateLibrary);
+
+        JsonNode changed = call("GET", "/api/v1/media?library=" + libraryId + "&updatedSince=" + since, admin, null)
+                .json();
+        assertThat(changed.path("items").findValuesAsText("title")).containsExactly("Tenet");
+        JsonNode removed = call("GET", "/api/v1/media/removed?since=" + since, admin, null).json();
+        assertThat(removed.path("resetRequired").asBoolean()).isFalse();
+        assertThat(removed.path("items").findValuesAsText("mediaId")).contains(ids.get("Arrival"), memento);
+        // Removals in libraries a user cannot see are not listed to them.
+        JsonNode removedForBob = call("GET", "/api/v1/media/removed?since=" + since, bob, null).json();
+        assertThat(removedForBob.path("items").findValuesAsText("mediaId")).contains(ids.get("Arrival"))
+                .doesNotContain(memento);
+
+        // Changes the lists cannot describe require a full sync.
+        assertThat(call("GET", "/api/v1/media/removed?since=" + since.minus(Duration.ofDays(100)), admin, null)
+                .json().path("resetRequired").asBoolean()).isTrue();
+        String bobId = null;
+        for (JsonNode u : call("GET", "/api/v1/users?pageSize=200", admin, null).json().path("items")) {
+            bobId = "bob".equals(u.path("username").asText()) ? u.path("id").asText() : bobId;
+        }
+        Instant beforeRoles = Instant.now();
+        Response promoted = call("PATCH", "/api/v1/users/" + bobId, admin, Map.of("roles", List.of("USER", "ADMIN")));
+        assertThat(promoted.status()).as(promoted.body()).isEqualTo(200);
+        assertThat(call("PATCH", "/api/v1/users/" + bobId, admin, Map.of("roles", List.of("USER"))).status())
+                .isEqualTo(200);
+        assertThat(call("GET", "/api/v1/media/removed?since=" + beforeRoles, bob, null).json()
+                .path("resetRequired").asBoolean()).isTrue();
+        assertThat(call("GET", "/api/v1/media/removed?since=" + beforeRoles, admin, null).json()
+                .path("resetRequired").asBoolean()).isFalse();
+        call("PATCH", "/api/v1/libraries/" + privateLibrary, admin, Map.of("access", Map.of("allUsers", true)));
+        assertThat(call("GET", "/api/v1/media/removed?since=" + beforeRoles, admin, null).json()
+                .path("resetRequired").asBoolean()).isTrue();
+        assertThat(call("GET", "/api/v1/media/removed", admin, null).status()).isEqualTo(400);
+    }
+
+    @Test
     void privateLibrariesAreHiddenFromOtherUsers() throws Exception {
         Path dir = mediaDir("private-" + System.nanoTime(), "Secret Film (2001).mp4", 100);
         String libraryId = createLibrary("Private", dir, false);
