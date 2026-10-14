@@ -143,7 +143,8 @@ public class LibraryScanner {
         Optional<MediaFile> existing = files.findByPath(key);
         if (existing.isPresent()) {
             MediaFile file = existing.get();
-            if (file.getSize() != size || !Objects.equals(file.getModifiedAt(), modified)) {
+            boolean outdatedProbe = file.getProbeVersion() == null || file.getProbeVersion() < MediaProbe.VERSION;
+            if (file.getSize() != size || !Objects.equals(file.getModifiedAt(), modified) || outdatedProbe) {
                 applyProbe(file, normalized, size, modified);
                 files.save(file);
                 items.findById(file.getMediaId()).ifPresent(item -> {
@@ -222,6 +223,9 @@ public class LibraryScanner {
         file.setAudioCodec(info.audioCodec());
         file.setWidth(info.width());
         file.setHeight(info.height());
+        file.setSubtitles(new ArrayList<>(info.subtitles()));
+        // Also when ffprobe is missing or failed: like before, such files are not probed again until they change.
+        file.setProbeVersion(MediaProbe.VERSION);
     }
 
     private void removeMissing(Library library, Set<String> present) {

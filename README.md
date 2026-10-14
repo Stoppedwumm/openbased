@@ -195,6 +195,8 @@ timeout, or on restart.
 | `POST /api/v1/media/{id}/metadata/refresh` | `library.write` |
 | `GET /api/v1/media/{id}/stream` | `media.stream` |
 | `GET /api/v1/media/{id}/download` | `media.download` |
+| `GET /api/v1/media/{id}/subtitles` | `media.read` |
+| `GET /api/v1/media/{id}/subtitles/{trackId}` | `media.stream` or `media.download` |
 | `POST /api/v1/playback/sessions`, `GET`/`DELETE /api/v1/playback/{id}`, `GET /api/v1/playback/{id}/stream` | `media.stream` |
 | `PUT /api/v1/media/{id}/progress`, `POST /api/v1/progress/batch` | `history.write` |
 | `GET /api/v1/media/{id}/progress`, `GET /api/v1/history`, `GET /api/v1/continue-watching` | `history.read` |
@@ -258,6 +260,22 @@ file, so a client never joins parts of two versions. `If-None-Match` returns `30
 
 `media.download` lets administrators keep well-behaved clients from offering downloads; it is not a protection:
 anyone with `media.stream` can read the whole file from `/stream` with Range requests.
+
+### Subtitles
+
+`GET /api/v1/media/{id}/subtitles` (optionally `?fileId=`) lists a file's subtitle tracks: `id`, `source`
+(`EMBEDDED` or `SIDECAR`), `language`, `title`, `format`, `forced`, `defaultTrack`, `hearingImpaired`, and
+`text` (whether it can be served). `GET /api/v1/media/{id}/subtitles/{trackId}` returns a track as
+`text/vtt; charset=UTF-8`.
+
+- Embedded tracks are read by ffprobe during the scan (files scanned by older versions are probed again on the
+  next scan). Text tracks (SubRip, ASS/SSA, WebVTT, MP4 text) are converted by ffmpeg and cached in
+  `data-dir/subtitle-cache`; image tracks (PGS, VobSub, DVB) are listed with `text: false` and cannot be served.
+- Sidecar `.srt` and `.vtt` files next to the video and named after it are listed on each request, so new ones
+  appear without a rescan: `Movie.srt`, `Movie.en.srt`, `Movie.en.sdh.srt`, `Movie.pt-br.forced.vtt`. The first
+  2–3 letter code (optionally with a region) is the language; `forced`, `default` and `sdh`/`cc`/`hi` set the
+  flags; other words become the title. SubRip is converted to WebVTT; UTF-8, UTF-16 with BOM and Windows-1252
+  are recognised.
 
 ### Uploads
 

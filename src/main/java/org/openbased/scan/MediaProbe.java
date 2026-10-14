@@ -2,6 +2,7 @@ package org.openbased.scan;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -9,6 +10,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import org.openbased.config.OpenBasedProperties;
+import org.openbased.media.EmbeddedSubtitle;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -28,9 +30,13 @@ public class MediaProbe {
         this.objectMapper = objectMapper;
     }
 
+    /** Bumped when a probe reads more; files probed by an older version are probed again on the next scan. */
+    public static final int VERSION = 2;
+
     /** @param duration milliseconds */
-    public record Info(Long duration, String videoCodec, String audioCodec, Integer width, Integer height) {
-        static final Info EMPTY = new Info(null, null, null, null, null);
+    public record Info(Long duration, String videoCodec, String audioCodec, Integer width, Integer height,
+            List<EmbeddedSubtitle> subtitles) {
+        static final Info EMPTY = new Info(null, null, null, null, null, List.of());
     }
 
     public Info probe(Path file) {
@@ -76,6 +82,7 @@ public class MediaProbe {
         }
         String video = null;
         String audio = null;
+        List<EmbeddedSubtitle> subtitles = new ArrayList<>();
         Integer width = null;
         Integer height = null;
         for (JsonNode stream : root.path("streams")) {
@@ -87,8 +94,16 @@ public class MediaProbe {
                 height = stream.hasNonNull("height") ? stream.path("height").asInt() : null;
             } else if ("audio".equals(kind) && audio == null) {
                 audio = stream.path("codec_name").asText(null);
+            } else if ("subtitle".equals(kind)) {
+                JsonNode tags = stream.path("tags");
+                JsonNode disposition = stream.path("disposition");
+                String language = tags.path("language").asText(null);
+                subtitles.add(new EmbeddedSubtitle(stream.path("index").asInt(), stream.path("codec_name").asText(null),
+                        language == null || "und".equals(language) ? null : language, tags.path("title").asText(null),
+                        disposition.path("forced").asInt() == 1, disposition.path("default").asInt() == 1,
+                        disposition.path("hearing_impaired").asInt() == 1));
             }
         }
-        return new Info(duration, video, audio, width, height);
+        return new Info(duration, video, audio, width, height, List.copyOf(subtitles));
     }
 }
