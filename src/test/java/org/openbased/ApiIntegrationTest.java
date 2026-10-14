@@ -365,6 +365,68 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void artworkIsScaledToFixedWidths() throws Exception {
+        Path dir = mediaDir("artwork-" + System.nanoTime(), "Heat (1995).mkv", 100);
+        Path poster = dir.resolve("Heat (1995)-poster.jpg");
+        writeImage(poster, 1000, 1500, java.awt.Color.RED, false);
+        Path pngDir = mediaDir("artwork-png-" + System.nanoTime(), "Up (2009).mkv", 100);
+        writeImage(pngDir.resolve("Up (2009)-poster.png"), 600, 900, new java.awt.Color(0, 128, 0, 100), true);
+        String libraryId = createLibrary("Artwork", dir, true);
+        scan(libraryId);
+        String pngLibrary = createLibrary("Artwork PNG", pngDir, true);
+        scan(pngLibrary);
+        String url = call("GET", "/api/v1/media?library=" + libraryId, admin, null).json().path("items").get(0)
+                .path("poster").asText();
+        String pngUrl = call("GET", "/api/v1/media?library=" + pngLibrary, admin, null).json().path("items").get(0)
+                .path("poster").asText();
+        assertThat(url).startsWith("/api/v1/artwork/");
+
+        assertThat(image(download(url, admin)).getWidth()).isEqualTo(1000);
+        HttpResponse<byte[]> small = download(url + "?w=300", admin);
+        assertThat(small.headers().firstValue("Content-Type")).hasValue("image/jpeg");
+        assertThat(small.headers().firstValue("Cache-Control").orElseThrow()).contains("private");
+        java.awt.image.BufferedImage scaled = image(small);
+        assertThat(scaled.getWidth()).isEqualTo(342);
+        assertThat(scaled.getHeight()).isEqualTo(513);
+        assertThat(new java.awt.Color(scaled.getRGB(171, 256)).getRed()).isGreaterThan(200);
+        // Served from the cache the second time.
+        assertThat(download(url + "?w=342", admin).body()).isEqualTo(small.body());
+        // Never enlarged; requests wider than the largest fixed width get the original.
+        assertThat(image(download(url + "?w=1100", admin)).getWidth()).isEqualTo(1000);
+        assertThat(image(download(url + "?w=5000", admin)).getWidth()).isEqualTo(1000);
+
+        // Transparent images stay PNG.
+        HttpResponse<byte[]> png = download(pngUrl + "?w=100", admin);
+        assertThat(png.headers().firstValue("Content-Type")).hasValue("image/png");
+        assertThat(image(png).getWidth()).isEqualTo(154);
+        assertThat(image(png).getColorModel().hasAlpha()).isTrue();
+
+        // A replaced image is scaled again rather than served from the cache.
+        writeImage(poster, 800, 1200, java.awt.Color.BLUE, false);
+        Files.setLastModifiedTime(poster, java.nio.file.attribute.FileTime.from(Instant.now().plusSeconds(5)));
+        java.awt.image.BufferedImage replaced = image(download(url + "?w=300", admin));
+        assertThat(new java.awt.Color(replaced.getRGB(171, 256)).getBlue()).isGreaterThan(200);
+
+        assertThat(download(url + "?w=0", admin).statusCode()).isEqualTo(400);
+    }
+
+    private static void writeImage(Path path, int width, int height, java.awt.Color color, boolean alpha)
+            throws IOException {
+        java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(width, height,
+                alpha ? java.awt.image.BufferedImage.TYPE_INT_ARGB : java.awt.image.BufferedImage.TYPE_INT_RGB);
+        java.awt.Graphics2D g = image.createGraphics();
+        g.setColor(color);
+        g.fillRect(0, 0, width, height);
+        g.dispose();
+        javax.imageio.ImageIO.write(image, alpha ? "png" : "jpg", path.toFile());
+    }
+
+    private static java.awt.image.BufferedImage image(HttpResponse<byte[]> response) throws IOException {
+        assertThat(response.statusCode()).isEqualTo(200);
+        return javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(response.body()));
+    }
+
+    @Test
     void privateLibrariesAreHiddenFromOtherUsers() throws Exception {
         Path dir = mediaDir("private-" + System.nanoTime(), "Secret Film (2001).mp4", 100);
         String libraryId = createLibrary("Private", dir, false);

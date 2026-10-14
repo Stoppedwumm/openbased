@@ -259,6 +259,14 @@ file, so a client never joins parts of two versions. `If-None-Match` returns `30
 `media.download` lets administrators keep well-behaved clients from offering downloads; it is not a protection:
 anyone with `media.stream` can read the whole file from `/stream` with Range requests.
 
+### Artwork sizes
+
+`GET /api/v1/artwork/{id}?w=<pixels>` returns the image scaled down to that width, rounded up to 92, 154, 185,
+342, 500, 780 or 1280 so that only these sizes are stored. Images are never enlarged; wider requests, and
+formats the server cannot decode (WebP), get the original. Scaled copies are JPEG, or PNG when the image has
+transparency, and are cached in `data-dir/artwork-cache`; a replaced image is scaled again, and copies of
+removed artwork are deleted daily.
+
 ### Uploads
 
 1. `POST /api/v1/uploads` with `filename`, `size`, `libraryId` returns `id` and `chunkSize`.
