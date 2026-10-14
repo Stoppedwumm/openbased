@@ -2,6 +2,7 @@ package org.openbased.media;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -10,6 +11,7 @@ import java.util.Set;
 import jakarta.persistence.criteria.Predicate;
 
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 import org.openbased.common.ApiException;
@@ -61,11 +63,13 @@ public class MediaController {
             @RequestParam(required = false) String sort,
             @RequestParam(required = false) String query,
             @RequestParam(required = false) Integer year,
-            @RequestParam(required = false) String genre) {
+            @RequestParam(required = false) String genre,
+            @Parameter(description = "Only items added or changed at or after this time (ISO-8601); pass "
+                    + "syncedAt from GET /media/removed") @RequestParam(required = false) Instant updatedSince) {
         access.require(Scopes.MEDIA_READ);
         Set<String> libraryIds = library != null ? Set.of(access.library(library).getId())
                 : access.accessibleLibraryIds();
-        Specification<MediaItem> spec = filter(libraryIds, type, query, year, genre);
+        Specification<MediaItem> spec = filter(libraryIds, type, query, year, genre, updatedSince);
         org.springframework.data.domain.Page<MediaItem> result = items.findAll(spec, Paging.of(page, pageSize, sort(sort)));
         Map<String, MediaDtos.UserProgress> progressById =
                 progress.forCurrentUser(result.getContent().stream().map(MediaItem::getId).toList());
@@ -107,7 +111,7 @@ public class MediaController {
     }
 
     static Specification<MediaItem> filter(Set<String> libraryIds, MediaType type, String query, Integer year,
-            String genre) {
+            String genre, Instant updatedSince) {
         return (root, q, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
             predicates.add(libraryIds.isEmpty() ? cb.disjunction() : root.get("libraryId").in(libraryIds));
@@ -116,6 +120,9 @@ public class MediaController {
             }
             if (year != null) {
                 predicates.add(cb.equal(root.get("year"), year));
+            }
+            if (updatedSince != null) {
+                predicates.add(cb.greaterThanOrEqualTo(root.get("updatedAt"), updatedSince));
             }
             if (query != null && !query.isBlank()) {
                 String like = "%" + escapeLike(query.trim().toLowerCase(java.util.Locale.ROOT)) + "%";

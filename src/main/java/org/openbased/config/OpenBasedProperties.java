@@ -34,6 +34,7 @@ public class OpenBasedProperties {
     private final Jobs jobs = new Jobs();
     private final BuiltinClients builtinClients = new BuiltinClients();
     private final Roles roles = new Roles();
+    private final Sync sync = new Sync();
     private final Downloads downloads = new Downloads();
 
     public String getIssuer() { return issuer; }
@@ -52,6 +53,7 @@ public class OpenBasedProperties {
     public Jobs getJobs() { return jobs; }
     public BuiltinClients getBuiltinClients() { return builtinClients; }
     public Roles getRoles() { return roles; }
+    public Sync getSync() { return sync; }
     public Downloads getDownloads() { return downloads; }
 
     public Optional<Client> client(String clientId) {
@@ -218,6 +220,15 @@ public class OpenBasedProperties {
 
         public Set<String> getUser() { return user; }
         public void setUser(Set<String> user) { this.user = user; }
+    }
+
+    /** Incremental sync of the media catalogue. */
+    public static class Sync {
+        /** Removed media IDs are kept this long; clients that last synced earlier must sync everything again. */
+        private Duration retention = Duration.ofDays(90);
+
+        public Duration getRetention() { return retention; }
+        public void setRetention(Duration retention) { this.retention = retention; }
     }
 
     /** Optimized (transcoded or remuxed) downloads prepared on the server. */

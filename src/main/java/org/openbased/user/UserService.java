@@ -10,6 +10,7 @@ import org.openbased.common.Ids;
 import org.openbased.event.EventBus;
 import org.openbased.event.EventType;
 import org.openbased.security.Scopes;
+import org.openbased.sync.SyncService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,11 +21,13 @@ public class UserService {
     private final UserRepository users;
     private final PasswordEncoder passwordEncoder;
     private final EventBus events;
+    private final SyncService sync;
 
-    public UserService(UserRepository users, PasswordEncoder passwordEncoder, EventBus events) {
+    public UserService(UserRepository users, PasswordEncoder passwordEncoder, EventBus events, SyncService sync) {
         this.users = users;
         this.passwordEncoder = passwordEncoder;
         this.events = events;
+        this.sync = sync;
     }
 
     @Transactional
@@ -62,12 +65,17 @@ public class UserService {
         if (email != null) {
             user.setEmail(email);
         }
+        boolean adminBefore = user.isAdmin();
         if (roles != null) {
             user.setRoles(new HashSet<>(roles));
         }
         if (extraPermissions != null) {
             validatePermissions(extraPermissions);
             user.setExtraPermissions(new HashSet<>(extraPermissions));
+        }
+        if (adminBefore != user.isAdmin()) {
+            // Administrators see every library, so the user's catalogue changed without the media changing.
+            sync.reset(user.getId(), "Administrator access changed");
         }
         if (enabled != null) {
             user.setEnabled(enabled);

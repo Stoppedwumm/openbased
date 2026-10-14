@@ -9,6 +9,7 @@ import org.openbased.event.EventBus;
 import org.openbased.event.EventType;
 import org.openbased.progress.PlaybackProgressRepository;
 import org.openbased.progress.WatchHistoryRepository;
+import org.openbased.sync.SyncService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -25,15 +26,17 @@ public class MediaService {
     private final PlaybackProgressRepository progress;
     private final WatchHistoryRepository history;
     private final EventBus events;
+    private final SyncService sync;
 
     public MediaService(MediaItemRepository items, MediaFileRepository files, ArtworkRepository artwork,
-            PlaybackProgressRepository progress, WatchHistoryRepository history, EventBus events) {
+            PlaybackProgressRepository progress, WatchHistoryRepository history, EventBus events, SyncService sync) {
         this.items = items;
         this.files = files;
         this.artwork = artwork;
         this.progress = progress;
         this.history = history;
         this.events = events;
+        this.sync = sync;
     }
 
     /**
@@ -58,6 +61,7 @@ public class MediaService {
         progress.deleteByMediaId(item.getId());
         history.deleteByMediaId(item.getId());
         items.delete(item);
+        sync.removed(item);
         events.publishForLibrary(EventType.MEDIA_REMOVED, item.getLibraryId(), Map.of("mediaId", item.getId()));
     }
 

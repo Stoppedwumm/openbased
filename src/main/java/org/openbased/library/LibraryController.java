@@ -26,6 +26,7 @@ import org.openbased.media.MediaService;
 import org.openbased.scan.LibraryScanner;
 import org.openbased.security.AccessService;
 import org.openbased.security.Scopes;
+import org.openbased.sync.SyncService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
@@ -50,15 +51,17 @@ public class LibraryController {
     private final LibraryScanner scanner;
     private final JobService jobs;
     private final AccessService access;
+    private final SyncService sync;
 
     public LibraryController(LibraryRepository libraries, MediaItemRepository items, MediaService mediaService,
-            LibraryScanner scanner, JobService jobs, AccessService access) {
+            LibraryScanner scanner, JobService jobs, AccessService access, SyncService sync) {
         this.libraries = libraries;
         this.items = items;
         this.mediaService = mediaService;
         this.scanner = scanner;
         this.jobs = jobs;
         this.access = access;
+        this.sync = sync;
     }
 
     public record LibraryAccess(boolean allUsers, Set<String> userIds) {
@@ -127,6 +130,10 @@ public class LibraryController {
         }
         applyAccess(library, request.access());
         libraries.save(library);
+        if (request.access() != null) {
+            // Users may have gained or lost the library's media without the media changing.
+            sync.resetEveryone("Access to library " + library.getId() + " changed");
+        }
         return toResponse(library, true);
     }
 
@@ -145,6 +152,8 @@ public class LibraryController {
         }
         items.findByLibraryId(libraryId).forEach(item -> mediaService.remove(item, deleteFiles));
         libraries.delete(library);
+        // Tombstones are only listed for libraries the caller can still see.
+        sync.resetEveryone("Library " + libraryId + " was deleted");
         return ResponseEntity.noContent().build();
     }
 
