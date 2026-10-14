@@ -93,6 +93,7 @@ The important ones:
 | `openbased.rate-limit.*` | Requests per window per user/client/IP. |
 | `openbased.uploads.*` | Chunk size, maximum size, allowed extensions. |
 | `openbased.playback.*` | ffmpeg/ffprobe paths, idle timeout for playback sessions. |
+| `openbased.roles.user` | Permissions of the `USER` role (defaults below); e.g. remove `media.download` to allow streaming but not downloads. |
 | `openbased.metadata.tmdb.api-key` | Enables the built-in TMDB metadata provider (or set `TMDB_API_KEY`). |
 
 To use PostgreSQL, set `spring.datasource.url`, `username` and `password`.
@@ -167,7 +168,8 @@ Every protected request is checked for:
 Access tokens only carry the requested scopes the user actually holds. ID tokens are rejected as bearer
 tokens. A PAT can only be created with scopes held by both the user and the token used to create it.
 
-The `USER` role grants `openid profile email media.read media.stream library.read history.read history.write`;
+The `USER` role grants `openid profile email media.read media.stream media.download library.read history.read
+history.write` unless `openbased.roles.user` lists other permissions (unknown names stop the server at startup);
 `ADMIN` grants every scope. Additional permissions can be granted per user.
 
 ### Streaming links
@@ -192,6 +194,7 @@ timeout, or on restart.
 | `GET /api/v1/metadata/search` | `media.read` |
 | `POST /api/v1/media/{id}/metadata/refresh` | `library.write` |
 | `GET /api/v1/media/{id}/stream` | `media.stream` |
+| `GET /api/v1/media/{id}/download` | `media.download` |
 | `POST /api/v1/playback/sessions`, `GET`/`DELETE /api/v1/playback/{id}`, `GET /api/v1/playback/{id}/stream` | `media.stream` |
 | `PUT /api/v1/media/{id}/progress`, `POST /api/v1/progress/batch` | `history.write` |
 | `GET /api/v1/media/{id}/progress`, `GET /api/v1/history`, `GET /api/v1/continue-watching` | `history.read` |
@@ -241,6 +244,20 @@ is applied.
 - `TRANSCODE`: re-encoded to H.264/AAC in MP4, or VP9/Opus in WebM.
 
 Remuxed and transcoded streams do not support `Range`; seek with `?start=<seconds>`.
+
+### Downloads
+
+`GET /api/v1/media/{id}/download` (optionally `?fileId=`) returns the original file for keeping on the device,
+with `Content-Disposition: attachment` (the file's name, ASCII in `filename` and exact in `filename*`),
+`Content-Length`, `Accept-Ranges`, a strong `ETag` and `Last-Modified`. `HEAD` returns the same headers.
+
+To resume, send `Range: bytes=<received>-` together with `If-Range: <ETag>` (or the `Last-Modified` date; prefer the `ETag`, which changes even when a file is replaced
+twice within a second). If
+the file is unchanged the response is `206` with the rest; if it was replaced since, it is `200` with the whole new
+file, so a client never joins parts of two versions. `If-None-Match` returns `304` when the copy is current.
+
+`media.download` lets administrators keep well-behaved clients from offering downloads; it is not a protection:
+anyone with `media.stream` can read the whole file from `/stream` with Range requests.
 
 ### Uploads
 

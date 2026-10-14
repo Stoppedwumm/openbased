@@ -71,6 +71,9 @@ openbased:
   # OAuth2 clients for official apps, registered in addition to "clients" above.
   builtin-clients:
     android: true
+  # Permissions of the USER role. Unset means the built-in defaults (which include media.download).
+  # roles:
+  #   user: [openid, profile, email, media.read, media.stream, library.read, history.read, history.write]
   rate-limit:
     enabled: true
     limit: 1000
