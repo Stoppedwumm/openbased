@@ -285,6 +285,29 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void simultaneousFirstProgressUpdatesDoNotFail() throws Exception {
+        Path dir = mediaDir("race-" + System.nanoTime(), "Heat (1995).mkv", 100);
+        String libraryId = createLibrary("Race", dir, true);
+        scan(libraryId);
+        String mediaId = call("GET", "/api/v1/media?library=" + libraryId, admin, null).json().path("items").get(0)
+                .path("id").asText();
+        List<java.util.concurrent.CompletableFuture<Response>> calls = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            int position = i;
+            calls.add(java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                try {
+                    return call("PUT", "/api/v1/media/" + mediaId + "/progress", admin, Map.of("position", position));
+                } catch (Exception e) {
+                    throw new IllegalStateException(e);
+                }
+            }));
+        }
+        for (java.util.concurrent.CompletableFuture<Response> c : calls) {
+            assertThat(c.get().status()).isEqualTo(200);
+        }
+    }
+
+    @Test
     void privateLibrariesAreHiddenFromOtherUsers() throws Exception {
         Path dir = mediaDir("private-" + System.nanoTime(), "Secret Film (2001).mp4", 100);
         String libraryId = createLibrary("Private", dir, false);

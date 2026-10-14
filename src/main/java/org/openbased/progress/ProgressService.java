@@ -14,7 +14,9 @@ import org.openbased.media.MediaLookup;
 import org.openbased.playback.PlaybackSessions;
 import org.openbased.user.User;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Records playback progress and watch history. Updates may carry the time they were recorded on the client
@@ -33,9 +35,11 @@ public class ProgressService {
     private final MediaLookup lookup;
     private final PlaybackSessions sessions;
     private final EventBus events;
+    private final TransactionTemplate transactions;
 
     public ProgressService(PlaybackProgressRepository progress, WatchHistoryRepository history, MediaLookup lookup,
-            PlaybackSessions sessions, EventBus events) {
+            PlaybackSessions sessions, EventBus events, PlatformTransactionManager transactionManager) {
+        this.transactions = new TransactionTemplate(transactionManager);
         this.progress = progress;
         this.history = history;
         this.lookup = lookup;
@@ -59,8 +63,19 @@ public class ProgressService {
         return recordedAt == null || recordedAt.isAfter(now) ? now : recordedAt;
     }
 
-    @Transactional
+    /**
+     * Records an update in its own transaction. The first update for a user and media item inserts the progress
+     * row; when two such updates race, one hits the unique constraint and is retried, and then finds the row.
+     */
     public Result record(User user, String mediaId, Update update) {
+        try {
+            return transactions.execute(status -> apply(user, mediaId, update));
+        } catch (DataIntegrityViolationException e) {
+            return transactions.execute(status -> apply(user, mediaId, update));
+        }
+    }
+
+    private Result apply(User user, String mediaId, Update update) {
         MediaItem item = lookup.media(mediaId);
         if (update.duration() != null && update.position() > update.duration()) {
             throw ApiException.unprocessable("VALIDATION_FAILED", "position must not exceed duration");
@@ -94,7 +109,8 @@ public class ProgressService {
         }
         p.setCompleted(completed);
         p.setUpdatedAt(at);
-        progress.save(p);
+        // Flush now, so a concurrent insert of the same row fails here and can be retried.
+        progress.saveAndFlush(p);
 
         sessions.touch(user.getId(), item.getId());
         events.publishForUser(EventType.PLAYBACK_PROGRESS, user.getId(), Map.of("mediaId", item.getId(),
