@@ -1,11 +1,18 @@
 package org.openbased.media;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 
+import jakarta.persistence.CollectionTable;
 import jakarta.persistence.Column;
+import jakarta.persistence.ElementCollection;
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.OrderColumn;
 import jakarta.persistence.Table;
 
 /** A file on disk belonging to a media item. File system paths are never exposed through the API. */
@@ -34,6 +41,13 @@ public class MediaFile {
     private Integer width;
     private Integer height;
     private Instant modifiedAt;
+    /** {@code MediaProbe.VERSION} of the probe that filled the technical fields; older probes are repeated. */
+    private Integer probeVersion;
+
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "media_file_subtitles", joinColumns = @JoinColumn(name = "file_id"))
+    @OrderColumn(name = "position")
+    private List<EmbeddedSubtitle> subtitles = new ArrayList<>();
 
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
@@ -59,4 +73,8 @@ public class MediaFile {
     public void setHeight(Integer height) { this.height = height; }
     public Instant getModifiedAt() { return modifiedAt; }
     public void setModifiedAt(Instant modifiedAt) { this.modifiedAt = modifiedAt; }
+    public Integer getProbeVersion() { return probeVersion; }
+    public void setProbeVersion(Integer probeVersion) { this.probeVersion = probeVersion; }
+    public List<EmbeddedSubtitle> getSubtitles() { return subtitles; }
+    public void setSubtitles(List<EmbeddedSubtitle> subtitles) { this.subtitles = subtitles; }
 }
