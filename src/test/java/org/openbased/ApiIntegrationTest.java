@@ -365,6 +365,132 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void optimizedDownloadsArePreparedByJobs() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeTrue(ffmpegAvailable(), "ffmpeg is not installed");
+        Path dir = Files.createDirectories(TMP.resolve("optimized-" + System.nanoTime()));
+        Path video = dir.resolve("Alien (1979).mkv");
+        Process ffmpeg = new ProcessBuilder("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=10",
+                "-f", "lavfi", "-i", "sine", "-t", "2", "-c:v", "libx264", "-c:a", "aac", video.toString())
+                .redirectErrorStream(true).start();
+        assertThat(ffmpeg.waitFor()).isZero();
+        Files.write(dir.resolve("Broken (2000).mkv"), new byte[2000]);
+        String libraryId = createLibrary("Optimized", dir, true);
+        scan(libraryId);
+        JsonNode items = call("GET", "/api/v1/media?library=" + libraryId + "&sort=title", admin, null).json()
+                .path("items");
+        String alien = items.get(0).path("id").asText();
+        String broken = items.get(1).path("id").asText();
+
+        // The client plays the original: it is served as it is, and asking again returns the same download.
+        Response direct = call("POST", "/api/v1/downloads", admin, Map.of("mediaId", alien,
+                "capabilities", Map.of("containers", List.of("mkv"))));
+        assertThat(direct.status()).isEqualTo(201);
+        assertThat(direct.json().path("mode").asText()).isEqualTo("DIRECT_PLAY");
+        assertThat(direct.json().path("status").asText()).isEqualTo("READY");
+        Response again = call("POST", "/api/v1/downloads", admin, Map.of("mediaId", alien,
+                "capabilities", Map.of("containers", List.of("mkv"))));
+        assertThat(again.status()).isEqualTo(200);
+        assertThat(again.json().path("id").asText()).isEqualTo(direct.json().path("id").asText());
+        HttpResponse<byte[]> original = download(direct.json().path("url").asText(), admin);
+        assertThat(original.body()).isEqualTo(Files.readAllBytes(video));
+        assertThat(original.headers().firstValue("Content-Disposition").orElseThrow()).contains("Alien (1979).mkv");
+
+        BlockingQueue<String> received = new LinkedBlockingQueue<>();
+        WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+        headers.add("Authorization", "Bearer " + admin);
+        WebSocketSession socket = new StandardWebSocketClient().execute(new TextWebSocketHandler() {
+            @Override
+            protected void handleTextMessage(WebSocketSession session, TextMessage message) {
+                received.add(message.getPayload());
+            }
+        }, headers, URI.create("ws://localhost:" + port + "/api/v1/events")).get(10, TimeUnit.SECONDS);
+
+        // An MP4-only client gets a remuxed copy, prepared in the background.
+        Response remux = call("POST", "/api/v1/downloads", admin, Map.of("mediaId", alien,
+                "capabilities", Map.of("containers", List.of("mp4"))));
+        assertThat(remux.status()).isEqualTo(201);
+        assertThat(remux.json().path("mode").asText()).isEqualTo("REMUX");
+        String remuxId = remux.json().path("id").asText();
+        JsonNode ready = awaitDownload(remuxId, "READY");
+        assertThat(ready.path("progress").asInt()).isEqualTo(100);
+        assertThat(ready.path("expiresAt").asText()).isNotBlank();
+        HttpResponse<byte[]> mp4 = download(ready.path("url").asText(), admin);
+        assertThat(mp4.statusCode()).isEqualTo(200);
+        assertThat(mp4.headers().firstValue("Content-Type")).hasValue("video/mp4");
+        assertThat(mp4.headers().firstValue("Content-Disposition").orElseThrow()).contains("Alien (1979).mp4");
+        assertThat(new String(mp4.body(), 4, 4, StandardCharsets.US_ASCII)).isEqualTo("ftyp");
+        assertThat(mp4.body()).hasSize(ready.path("size").asInt());
+        String etag = mp4.headers().firstValue("ETag").orElseThrow();
+        HttpResponse<byte[]> rest = download(ready.path("url").asText(), admin, "Range", "bytes=100-", "If-Range", etag);
+        assertThat(rest.statusCode()).isEqualTo(206);
+        assertThat(rest.body()).hasSize(mp4.body().length - 100);
+
+        // A file ffmpeg cannot read fails, with the reason.
+        String failedId = call("POST", "/api/v1/downloads", admin, Map.of("mediaId", broken,
+                "capabilities", Map.of("containers", List.of("mp4")))).json().path("id").asText();
+        JsonNode failed = awaitDownload(failedId, "FAILED");
+        assertThat(failed.path("error").asText()).contains("ffmpeg");
+        assertThat(call("GET", "/api/v1/downloads/" + failedId + "/file", admin, null).json().path("error").asText())
+                .isEqualTo("DOWNLOAD_FAILED");
+
+        // The owner is told when each preparation ends.
+        Map<String, String> outcomes = new java.util.HashMap<>();
+        long eventDeadline = System.currentTimeMillis() + 10_000;
+        try {
+            while (outcomes.size() < 2 && System.currentTimeMillis() < eventDeadline) {
+                String message = received.poll(1, TimeUnit.SECONDS);
+                JsonNode event = message == null ? null : json.readTree(message);
+                if (event != null && event.path("type").asText().startsWith("DOWNLOAD_")) {
+                    outcomes.put(event.path("data").path("downloadId").asText(), event.path("type").asText());
+                }
+            }
+        } finally {
+            socket.close();
+        }
+        assertThat(outcomes).containsEntry(remuxId, "DOWNLOAD_READY").containsEntry(failedId, "DOWNLOAD_FAILED");
+
+        assertThat(call("GET", "/api/v1/downloads?pageSize=200", admin, null).json().path("items")
+                .findValuesAsText("id")).contains(remuxId, failedId, direct.json().path("id").asText());
+        assertThat(call("POST", "/api/v1/downloads", admin, Map.of("mediaId", alien,
+                "capabilities", Map.of("containers", List.of("avi")))).json().path("error").asText())
+                .isEqualTo("UNSUPPORTED_CAPABILITIES");
+
+        // Downloads belong to the user who requested them.
+        String bob = token("bob-svc", "media.read media.download");
+        assertThat(call("GET", "/api/v1/downloads/" + remuxId, bob, null).status()).isEqualTo(404);
+        assertThat(call("DELETE", "/api/v1/downloads/" + remuxId, bob, null).status()).isEqualTo(404);
+        assertThat(call("GET", "/api/v1/downloads/" + remuxId, token("admin-svc", "media.read media.stream"), null)
+                .status()).isEqualTo(403);
+
+        // Deleting removes the prepared file.
+        Path prepared = TMP.resolve("data").resolve("downloads").resolve(remuxId + ".mp4");
+        assertThat(prepared).exists();
+        assertThat(call("DELETE", "/api/v1/downloads/" + remuxId, admin, null).status()).isEqualTo(204);
+        assertThat(prepared).doesNotExist();
+        assertThat(call("GET", "/api/v1/downloads/" + remuxId, admin, null).status()).isEqualTo(404);
+    }
+
+    private JsonNode awaitDownload(String downloadId, String status) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+        while (true) {
+            JsonNode d = call("GET", "/api/v1/downloads/" + downloadId, admin, null).json();
+            if (status.equals(d.path("status").asText()) || System.nanoTime() > deadline) {
+                assertThat(d.path("status").asText()).as(d.toString()).isEqualTo(status);
+                return d;
+            }
+            Thread.sleep(100);
+        }
+    }
+
+    private static boolean ffmpegAvailable() {
+        try {
+            return new ProcessBuilder("ffmpeg", "-version").redirectErrorStream(true).start().waitFor() == 0;
+        } catch (IOException | InterruptedException e) {
+            return false;
+        }
+    }
+
+    @Test
     void sidecarSubtitlesAreServedAsWebVtt() throws Exception {
         Path dir = mediaDir("subtitles-" + System.nanoTime(), "Amelie (2001).mkv", 100);
         Files.write(dir.resolve("Amelie (2001).fr.srt"), "1\r\n00:00:01,000 --> 00:00:02,000\r\nCafé\r\n"

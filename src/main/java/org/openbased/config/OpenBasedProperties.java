@@ -34,6 +34,7 @@ public class OpenBasedProperties {
     private final Jobs jobs = new Jobs();
     private final BuiltinClients builtinClients = new BuiltinClients();
     private final Roles roles = new Roles();
+    private final Downloads downloads = new Downloads();
 
     public String getIssuer() { return issuer; }
     public void setIssuer(String issuer) { this.issuer = issuer.endsWith("/") ? issuer.substring(0, issuer.length() - 1) : issuer; }
@@ -51,6 +52,7 @@ public class OpenBasedProperties {
     public Jobs getJobs() { return jobs; }
     public BuiltinClients getBuiltinClients() { return builtinClients; }
     public Roles getRoles() { return roles; }
+    public Downloads getDownloads() { return downloads; }
 
     public Optional<Client> client(String clientId) {
         return clients.stream().filter(c -> c.getClientId().equals(clientId)).findFirst();
@@ -216,6 +218,19 @@ public class OpenBasedProperties {
 
         public Set<String> getUser() { return user; }
         public void setUser(Set<String> user) { this.user = user; }
+    }
+
+    /** Optimized (transcoded or remuxed) downloads prepared on the server. */
+    public static class Downloads {
+        /** Prepared files are deleted this long after they became ready. */
+        private Duration retention = Duration.ofDays(7);
+        /** Downloads a user may have waiting or in preparation at once. */
+        private int maxPendingPerUser = 5;
+
+        public Duration getRetention() { return retention; }
+        public void setRetention(Duration retention) { this.retention = retention; }
+        public int getMaxPendingPerUser() { return maxPendingPerUser; }
+        public void setMaxPendingPerUser(int maxPendingPerUser) { this.maxPendingPerUser = maxPendingPerUser; }
     }
 
     public static class Jobs {
