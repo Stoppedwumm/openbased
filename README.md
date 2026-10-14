@@ -93,6 +93,8 @@ The important ones:
 | `openbased.rate-limit.*` | Requests per window per user/client/IP. |
 | `openbased.uploads.*` | Chunk size, maximum size, allowed extensions. |
 | `openbased.playback.*` | ffmpeg/ffprobe paths, idle timeout for playback sessions. |
+| `openbased.sync.retention` | How long removed media IDs are kept for incremental sync (default 90 days). |
+| `openbased.downloads.*` | Retention of prepared downloads (`retention`, default 7 days) and how many a user may have in preparation (`max-pending-per-user`, default 5). |
 | `openbased.roles.user` | Permissions of the `USER` role (defaults below); e.g. remove `media.download` to allow streaming but not downloads. |
 | `openbased.metadata.tmdb.api-key` | Enables the built-in TMDB metadata provider (or set `TMDB_API_KEY`). |
 
@@ -190,11 +192,15 @@ timeout, or on restart.
 | `POST /api/v1/users`, `PATCH /api/v1/users/{id}` | `users.write` |
 | `GET /api/v1/libraries`, `GET /api/v1/libraries/{id}` | `library.read` |
 | `POST /api/v1/libraries`, `PATCH`/`DELETE /api/v1/libraries/{id}`, `POST /api/v1/libraries/{id}/scan` | `library.write` |
+| `GET /api/v1/media/removed` | `media.read` |
 | `GET /api/v1/media`, `GET /api/v1/media/{id}`, `GET /api/v1/search`, `GET /api/v1/artwork/{id}` | `media.read` |
 | `GET /api/v1/metadata/search` | `media.read` |
 | `POST /api/v1/media/{id}/metadata/refresh` | `library.write` |
 | `GET /api/v1/media/{id}/stream` | `media.stream` |
 | `GET /api/v1/media/{id}/download` | `media.download` |
+| `POST`/`GET /api/v1/downloads`, `GET`/`DELETE /api/v1/downloads/{id}`, `GET /api/v1/downloads/{id}/file` | `media.download` |
+| `GET /api/v1/media/{id}/subtitles` | `media.read` |
+| `GET /api/v1/media/{id}/subtitles/{trackId}` | `media.stream` or `media.download` |
 | `POST /api/v1/playback/sessions`, `GET`/`DELETE /api/v1/playback/{id}`, `GET /api/v1/playback/{id}/stream` | `media.stream` |
 | `PUT /api/v1/media/{id}/progress`, `POST /api/v1/progress/batch` | `history.write` |
 | `GET /api/v1/media/{id}/progress`, `GET /api/v1/history`, `GET /api/v1/continue-watching` | `history.read` |
@@ -245,6 +251,23 @@ is applied.
 
 Remuxed and transcoded streams do not support `Range`; seek with `?start=<seconds>`.
 
+### Incremental sync
+
+Clients that keep a copy of the catalogue (for example for offline use) sync changes instead of reloading it:
+
+1. `GET /api/v1/media/removed?since=<last syncedAt>` lists the IDs of media removed since then (`items` of
+   `mediaId`, `removedAt`; paged) and returns `syncedAt` to store for next time.
+2. If `resetRequired` is true, reload everything: something changed that these lists cannot describe (a
+   library's access changed or it was deleted, the user's administrator access changed, or `since` is older than
+   `openbased.sync.retention`).
+3. Otherwise `GET /api/v1/media?updatedSince=<last syncedAt>` (with the usual paging) returns items added or
+   changed since then.
+
+`syncedAt` is a minute in the past, so changes committed while a sync runs are not missed; an item may be sent
+twice. Use the server's `syncedAt`, never the device's clock. Removals are only listed for libraries the caller
+can see. Playback progress is not part of an item's `updatedAt`; sync it with `/history` and
+`/continue-watching`.
+
 ### Downloads
 
 `GET /api/v1/media/{id}/download` (optionally `?fileId=`) returns the original file for keeping on the device,
@@ -259,6 +282,42 @@ file, so a client never joins parts of two versions. `If-None-Match` returns `30
 `media.download` lets administrators keep well-behaved clients from offering downloads; it is not a protection:
 anyone with `media.stream` can read the whole file from `/stream` with Range requests.
 
+### Optimized downloads
+
+For files the device cannot play, or that are too large for it, the server prepares a copy:
+
+1. `POST /api/v1/downloads` with `mediaId`, optional `fileId`, `capabilities` (as for playback sessions), and
+   optionally `maxHeight` (pixels) and `maxVideoBitrate` (bits per second). The server decides as for playback:
+   `DIRECT_PLAY` is `READY` at once and serves the original; `REMUX` and `TRANSCODE` start a background job and
+   are `PENDING`. A file taller than `maxHeight`, or whose average bitrate exceeds `maxVideoBitrate`, is
+   transcoded (scaled down and capped) even if the device could play it. The response is `201`, or `200` with
+   the existing download when the same file was already requested the same way and is pending or ready.
+2. Wait for the `DOWNLOAD_READY` or `DOWNLOAD_FAILED` event, or poll `GET /api/v1/downloads/{id}` (`progress`
+   0–100, `error` on failure).
+3. Fetch `url` (`GET /api/v1/downloads/{id}/file`). It supports Range, `If-Range`, `ETag` and `Last-Modified`
+   like `/media/{id}/download`; the file is named after the original with the new extension.
+
+Prepared files are regular MP4 (with the index at the start) or WebM, kept for `openbased.downloads.retention`
+after they became ready (`expiresAt`); then the download is `EXPIRED` and its file returns `410`. `DELETE`
+cancels a pending download or deletes the prepared file. `GET /api/v1/downloads` lists the caller's downloads.
+Downloads are private to the user who requested them, and access to the media item is checked again on every
+file request. Preparations interrupted by a restart are `FAILED`; request them again.
+### Subtitles
+
+`GET /api/v1/media/{id}/subtitles` (optionally `?fileId=`) lists a file's subtitle tracks: `id`, `source`
+(`EMBEDDED` or `SIDECAR`), `language`, `title`, `format`, `forced`, `defaultTrack`, `hearingImpaired`, and
+`text` (whether it can be served). `GET /api/v1/media/{id}/subtitles/{trackId}` returns a track as
+`text/vtt; charset=UTF-8`.
+
+- Embedded tracks are read by ffprobe during the scan (files scanned by older versions are probed again on the
+  next scan). Text tracks (SubRip, ASS/SSA, WebVTT, MP4 text) are converted by ffmpeg and cached in
+  `data-dir/subtitle-cache`; image tracks (PGS, VobSub, DVB) are listed with `text: false` and cannot be served.
+- Sidecar `.srt` and `.vtt` files next to the video and named after it are listed on each request, so new ones
+  appear without a rescan: `Movie.srt`, `Movie.en.srt`, `Movie.en.sdh.srt`, `Movie.pt-br.forced.vtt`. The first
+  2–3 letter code (optionally with a region) is the language; `forced`, `default` and `sdh`/`cc`/`hi` set the
+  flags; other words become the title. SubRip is converted to WebVTT; UTF-8, UTF-16 with BOM and Windows-1252
+  are recognised.
+
 ### Artwork sizes
 
 `GET /api/v1/artwork/{id}?w=<pixels>` returns the image scaled down to that width, rounded up to 92, 154, 185,
@@ -266,7 +325,6 @@ anyone with `media.stream` can read the whole file from `/stream` with Range req
 formats the server cannot decode (WebP), get the original. Scaled copies are JPEG, or PNG when the image has
 transparency, and are cached in `data-dir/artwork-cache`; a replaced image is scaled again, and copies of
 removed artwork are deleted daily.
-
 ### Uploads
 
 1. `POST /api/v1/uploads` with `filename`, `size`, `libraryId` returns `id` and `chunkSize`.
@@ -283,7 +341,7 @@ Abandoned uploads are cancelled after `openbased.uploads.stale-after`.
 
 `WS /api/v1/events` sends JSON events such as
 `{"type":"MEDIA_ADDED","timestamp":"…","data":{"mediaId":"media_…"}}`. Media and scan events go to users
-who can see the library, playback and upload events go to the user they concern, and `USER_*` events go to
+who can see the library, playback, upload and download events go to the user they concern, and `USER_*` events go to
 holders of `users.read`. The connection closes (code 4001) when its token expires.
 
 ## Plugins

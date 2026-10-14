@@ -16,6 +16,9 @@ public enum EventType {
     UPLOAD_COMPLETED,
     UPLOAD_FAILED,
 
+    DOWNLOAD_READY,
+    DOWNLOAD_FAILED,
+
     USER_CREATED,
     USER_UPDATED
 }
