@@ -91,5 +91,9 @@ openbased:
     tmdb:
       api-key: ${TMDB_API_KEY:}
       language: en-US
+  downloads:
+    # Prepared (remuxed or transcoded) downloads are deleted this long after they became ready.
+    retention: 7d
+    max-pending-per-user: 5
   jobs:
     workers: 2
