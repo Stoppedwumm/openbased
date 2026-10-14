@@ -1,34 +1,35 @@
 package org.openbased.progress;
 
-import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
+import java.util.stream.IntStream;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Size;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 import org.openbased.common.ApiException;
-import org.openbased.common.Ids;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.openbased.common.PageResponse;
 import org.openbased.common.Paging;
-import org.openbased.event.EventBus;
-import org.openbased.event.EventType;
 import org.openbased.media.MediaItem;
 import org.openbased.media.MediaLookup;
-import org.openbased.playback.PlaybackSessions;
 import org.openbased.security.AccessService;
 import org.openbased.security.Scopes;
 import org.openbased.user.User;
 import org.springframework.data.domain.Sort;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -40,32 +41,45 @@ import org.springframework.web.bind.annotation.RestController;
 @Tag(name = "Playback Progress")
 public class ProgressController {
 
-    /** Progress updates within this window of the previous one belong to the same viewing. */
-    private static final Duration SAME_VIEWING = Duration.ofHours(6);
+    private static final Logger log = LoggerFactory.getLogger(ProgressController.class);
+
+    /** At most this many updates are accepted in one batch. */
+    static final int MAX_BATCH = 500;
 
     private final PlaybackProgressRepository progress;
     private final WatchHistoryRepository history;
+    private final ProgressService service;
     private final MediaLookup lookup;
-    private final PlaybackSessions sessions;
-    private final EventBus events;
     private final AccessService access;
 
-    public ProgressController(PlaybackProgressRepository progress, WatchHistoryRepository history, MediaLookup lookup,
-            PlaybackSessions sessions, EventBus events, AccessService access) {
+    public ProgressController(PlaybackProgressRepository progress, WatchHistoryRepository history,
+            ProgressService service, MediaLookup lookup, AccessService access) {
         this.progress = progress;
         this.history = history;
+        this.service = service;
         this.lookup = lookup;
-        this.sessions = sessions;
-        this.events = events;
         this.access = access;
     }
 
-    /** Positions and durations are in seconds. */
+    /**
+     * Positions and durations are in seconds. {@code recordedAt} is when the client recorded the progress; send
+     * it for updates that were queued while offline. Updates older than the stored progress are not applied.
+     */
     public record ProgressUpdate(@NotNull @PositiveOrZero Double position, @PositiveOrZero Double duration,
-            Boolean completed) {
+            Boolean completed, Instant recordedAt) {
+
+        ProgressService.Update toUpdate() {
+            return new ProgressService.Update(position, duration, completed, recordedAt);
+        }
     }
 
-    public record ProgressSaved(String mediaId, double position, boolean completed) {
+    /** {@code applied} is false when a newer update was already stored; the stored values are returned. */
+    public record ProgressSaved(String mediaId, double position, boolean completed, Instant updatedAt,
+            boolean applied) {
+
+        static ProgressSaved of(ProgressService.Result r) {
+            return new ProgressSaved(r.mediaId(), r.position(), r.completed(), r.updatedAt(), r.applied());
+        }
     }
 
     public record ProgressResponse(double position, Double duration, boolean completed, Instant updatedAt) {
@@ -77,52 +91,67 @@ public class ProgressController {
     public record ContinueItem(String mediaId, double position, Double duration, Instant updatedAt) {
     }
 
+    public record BatchItem(@NotBlank String mediaId, @NotNull @PositiveOrZero Double position,
+            @PositiveOrZero Double duration, Boolean completed, Instant recordedAt) {
+    }
+
+    public record BatchRequest(@NotNull @Size(max = MAX_BATCH) List<@NotNull @Valid BatchItem> updates) {
+    }
+
+    public enum BatchStatus {
+        APPLIED,
+        IGNORED,
+        FAILED
+    }
+
+    /**
+     * One result per update, in request order. {@code position}, {@code completed} and {@code updatedAt} are the
+     * stored progress after the update; {@code error} and {@code message} are set when it failed.
+     */
+    public record BatchResult(String mediaId, BatchStatus status, Double position, Boolean completed,
+            Instant updatedAt, String error, String message) {
+    }
+
+    public record BatchResponse(List<BatchResult> results) {
+    }
+
     @PutMapping("/media/{mediaId}/progress")
-    @Transactional
-    @Operation(summary = "Update playback progress (seconds)")
+    @Operation(summary = "Update playback progress (seconds); older updates than the stored progress are ignored")
     public ProgressSaved update(@PathVariable String mediaId, @Valid @RequestBody ProgressUpdate request) {
         access.require(Scopes.HISTORY_WRITE);
+        return ProgressSaved.of(service.record(access.user(), mediaId, request.toUpdate()));
+    }
+
+    @PostMapping("/progress/batch")
+    @Operation(summary = "Apply queued progress updates, e.g. from offline playback; each update succeeds or fails "
+            + "on its own")
+    public BatchResponse batch(@Valid @RequestBody BatchRequest request) {
+        access.require(Scopes.HISTORY_WRITE);
         User user = access.user();
-        MediaItem item = lookup.media(mediaId);
-        if (request.duration() != null && request.position() > request.duration()) {
-            throw ApiException.unprocessable("VALIDATION_FAILED", "position must not exceed duration");
-        }
+        // Apply in the order the updates were recorded, so the newest one for a media item wins.
         Instant now = Instant.now();
-        PlaybackProgress p = progress.findByUserIdAndMediaId(user.getId(), item.getId()).orElseGet(() -> {
-            PlaybackProgress created = new PlaybackProgress();
-            created.setId(Ids.prefixed("prog"));
-            created.setUserId(user.getId());
-            created.setMediaId(item.getId());
-            return created;
-        });
-        boolean completed = request.completed() != null ? request.completed()
-                : request.duration() != null && request.duration() > 0 && request.position() / request.duration() >= 0.95;
-        p.setPosition(request.position());
-        if (request.duration() != null) {
-            p.setDuration(request.duration());
+        List<Integer> order = new ArrayList<>(IntStream.range(0, request.updates().size()).boxed().toList());
+        order.sort(Comparator.comparing(i -> ProgressService.effectiveTime(request.updates().get(i).recordedAt(), now)));
+        BatchResult[] results = new BatchResult[order.size()];
+        for (int i : order) {
+            BatchItem u = request.updates().get(i);
+            try {
+                ProgressService.Result r = service.record(user, u.mediaId(),
+                        new ProgressService.Update(u.position(), u.duration(), u.completed(), u.recordedAt()));
+                results[i] = new BatchResult(r.mediaId(), r.applied() ? BatchStatus.APPLIED : BatchStatus.IGNORED,
+                        r.position(), r.completed(), r.updatedAt(), null, null);
+            } catch (ApiException e) {
+                results[i] = new BatchResult(u.mediaId(), BatchStatus.FAILED, null, null, null, e.error(),
+                        e.getMessage());
+            } catch (RuntimeException e) {
+                // Report it on the item: earlier items are already committed, so failing the whole request would
+                // leave the client unable to tell what was stored.
+                log.error("Progress update for {} in a batch failed", u.mediaId(), e);
+                results[i] = new BatchResult(u.mediaId(), BatchStatus.FAILED, null, null, null, "INTERNAL_ERROR",
+                        "An unexpected error occurred.");
+            }
         }
-        p.setCompleted(completed);
-        p.setUpdatedAt(now);
-        progress.save(p);
-
-        WatchHistoryEntry entry = history.findFirstByUserIdAndMediaIdOrderByWatchedAtDesc(user.getId(), item.getId())
-                .filter(h -> h.getWatchedAt().isAfter(now.minus(SAME_VIEWING)))
-                .filter(h -> !h.isCompleted() || completed)
-                .orElseGet(() -> {
-                    WatchHistoryEntry created = new WatchHistoryEntry();
-                    created.setId(Ids.prefixed("hist"));
-                    created.setUserId(user.getId());
-                    created.setMediaId(item.getId());
-                    return created;
-                });
-        entry.setWatchedAt(now);
-        entry.setCompleted(entry.isCompleted() || completed);
-        history.save(entry);
-
-        sessions.touch(user.getId(), item.getId());
-        events.publishForUser(EventType.PLAYBACK_PROGRESS, user.getId(), Map.of("mediaId", item.getId(),
-                "position", request.position(), "completed", completed));
-        return new ProgressSaved(item.getId(), p.getPosition(), p.isCompleted());
+        return new BatchResponse(List.of(results));
     }
 
     @GetMapping("/media/{mediaId}/progress")
