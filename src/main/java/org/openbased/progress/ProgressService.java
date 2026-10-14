@@ -102,9 +102,14 @@ public class ProgressService {
         return new Result(item.getId(), p.getPosition(), p.isCompleted(), p.getUpdatedAt(), true);
     }
 
+    /**
+     * Extends the viewing that was in progress at {@code at}, or starts a new one. Only viewings at or before
+     * {@code at} qualify: progress synced late from an offline device must not change a later viewing, e.g. mark
+     * an unfinished viewing on another device as completed.
+     */
     private void recordHistory(User user, MediaItem item, Instant at, boolean completed) {
         WatchHistoryEntry entry = history.findFirstByUserIdAndMediaIdAndWatchedAtBetweenOrderByWatchedAtDesc(
-                user.getId(), item.getId(), at.minus(SAME_VIEWING), at.plus(SAME_VIEWING))
+                user.getId(), item.getId(), at.minus(SAME_VIEWING), at)
                 .filter(h -> !h.isCompleted() || completed)
                 .orElseGet(() -> {
                     WatchHistoryEntry created = new WatchHistoryEntry();

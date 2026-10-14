@@ -263,6 +263,23 @@ class ApiIntegrationTest {
         assertThat(call("GET", "/api/v1/media/" + dune + "/progress", admin, null).json().path("position")
                 .asDouble()).isEqualTo(400);
 
+        // A viewing finished offline is not merged into a later, unfinished viewing on another device.
+        Response online = call("PUT", "/api/v1/media/" + dune + "/progress", admin,
+                Map.of("position", 60, "duration", 600, "completed", false));
+        assertThat(online.json().path("applied").asBoolean()).isTrue();
+        Instant finishedOffline = now.minus(Duration.ofHours(1)).truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        Response offline = call("PUT", "/api/v1/media/" + dune + "/progress", admin,
+                Map.of("position", 600, "duration", 600, "completed", true, "recordedAt", finishedOffline.toString()));
+        assertThat(offline.json().path("applied").asBoolean()).isFalse();
+        Map<String, Boolean> duneViewings = new java.util.HashMap<>();
+        for (JsonNode h : call("GET", "/api/v1/history?pageSize=200", admin, null).json().path("items")) {
+            if (dune.equals(h.path("mediaId").asText())) {
+                duneViewings.put(h.path("watchedAt").asText(), h.path("completed").asBoolean());
+            }
+        }
+        assertThat(duneViewings).hasSize(2).containsEntry(finishedOffline.toString(), true)
+                .containsValue(false);
+
         assertThat(call("POST", "/api/v1/progress/batch", token("admin-svc", "history.read"),
                 Map.of("updates", List.of())).status()).isEqualTo(403);
     }
