@@ -365,6 +365,36 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void sidecarSubtitlesAreServedAsWebVtt() throws Exception {
+        Path dir = mediaDir("subtitles-" + System.nanoTime(), "Amelie (2001).mkv", 100);
+        Files.write(dir.resolve("Amelie (2001).fr.srt"), "1\r\n00:00:01,000 --> 00:00:02,000\r\nCafé\r\n"
+                .getBytes(java.nio.charset.Charset.forName("windows-1252")));
+        Files.writeString(dir.resolve("Amelie (2001).en.forced.vtt"), "WEBVTT\n\n00:01.000 --> 00:02.000\nHi\n");
+        String libraryId = createLibrary("Subtitles", dir, true);
+        scan(libraryId);
+        String mediaId = call("GET", "/api/v1/media?library=" + libraryId, admin, null).json().path("items").get(0)
+                .path("id").asText();
+
+        JsonNode tracks = call("GET", "/api/v1/media/" + mediaId + "/subtitles", admin, null).json();
+        assertThat(tracks.findValuesAsText("language")).containsExactly("en", "fr");
+        assertThat(tracks.get(0).path("forced").asBoolean()).isTrue();
+        assertThat(tracks.get(1).path("source").asText()).isEqualTo("SIDECAR");
+        String french = tracks.get(1).path("id").asText();
+
+        Response vtt = call("GET", "/api/v1/media/" + mediaId + "/subtitles/" + french, admin, null);
+        assertThat(vtt.status()).isEqualTo(200);
+        assertThat(vtt.header("Content-Type")).startsWith("text/vtt").containsIgnoringCase("charset=UTF-8");
+        assertThat(vtt.body()).isEqualTo("WEBVTT\n\n1\n00:00:01.000 --> 00:00:02.000\nCafé\n\n");
+
+        assertThat(call("GET", "/api/v1/media/" + mediaId + "/subtitles/s0000", admin, null).json().path("error")
+                .asText()).isEqualTo("SUBTITLE_NOT_FOUND");
+        assertThat(call("GET", "/api/v1/media/" + mediaId + "/subtitles/" + french, token("admin-svc", "media.read"),
+                null).status()).isEqualTo(403);
+        assertThat(call("GET", "/api/v1/media/" + mediaId + "/subtitles/" + french,
+                token("admin-svc", "media.read media.download"), null).status()).isEqualTo(200);
+    }
+
+    @Test
     void privateLibrariesAreHiddenFromOtherUsers() throws Exception {
         Path dir = mediaDir("private-" + System.nanoTime(), "Secret Film (2001).mp4", 100);
         String libraryId = createLibrary("Private", dir, false);
