@@ -81,6 +81,9 @@ class ApiIntegrationTest {
     @Autowired
     ObjectMapper json;
 
+    @Autowired
+    org.openbased.media.MediaItemRepository mediaItems;
+
     private final HttpClient http = HttpClient.newBuilder().proxy(HttpClient.Builder.NO_PROXY).build();
     private String admin;
 
@@ -204,6 +207,13 @@ class ApiIntegrationTest {
         String arrival = items.get(0).path("id").asText();
         String dune = items.get(1).path("id").asText();
         Instant now = Instant.now();
+        // Pretend the items were added a week ago, so progress recorded "yesterday" is plausible.
+        Instant added = now.minus(Duration.ofDays(7)).truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        for (String id : List.of(arrival, dune)) {
+            org.openbased.media.MediaItem item = mediaItems.findById(id).orElseThrow();
+            item.setAddedAt(added);
+            mediaItems.save(item);
+        }
 
         Response current = call("PUT", "/api/v1/media/" + arrival + "/progress", admin,
                 Map.of("position", 100, "duration", 7200));
@@ -225,6 +235,13 @@ class ApiIntegrationTest {
             }
         }
         assertThat(watched).hasSize(2).contains(yesterday);
+
+        // A time before the item was added (e.g. a reset device clock) is clamped to when it was added.
+        Response reset = call("PUT", "/api/v1/media/" + arrival + "/progress", admin,
+                Map.of("position", 10, "recordedAt", "1970-01-01T00:00:00Z"));
+        assertThat(reset.json().path("applied").asBoolean()).isFalse();
+        assertThat(call("GET", "/api/v1/history?pageSize=200", admin, null).json().path("items")
+                .findValuesAsText("watchedAt")).doesNotContain("1970-01-01T00:00:00Z").contains(added.toString());
 
         // A time ahead of the server's clock is clamped to it.
         Response future = call("PUT", "/api/v1/media/" + arrival + "/progress", admin,

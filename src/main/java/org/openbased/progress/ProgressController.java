@@ -17,6 +17,8 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 import org.openbased.common.ApiException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.openbased.common.PageResponse;
 import org.openbased.common.Paging;
 import org.openbased.media.MediaItem;
@@ -38,6 +40,8 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1")
 @Tag(name = "Playback Progress")
 public class ProgressController {
+
+    private static final Logger log = LoggerFactory.getLogger(ProgressController.class);
 
     /** At most this many updates are accepted in one batch. */
     static final int MAX_BATCH = 500;
@@ -139,6 +143,12 @@ public class ProgressController {
             } catch (ApiException e) {
                 results[i] = new BatchResult(u.mediaId(), BatchStatus.FAILED, null, null, null, e.error(),
                         e.getMessage());
+            } catch (RuntimeException e) {
+                // Report it on the item: earlier items are already committed, so failing the whole request would
+                // leave the client unable to tell what was stored.
+                log.error("Progress update for {} in a batch failed", u.mediaId(), e);
+                results[i] = new BatchResult(u.mediaId(), BatchStatus.FAILED, null, null, null, "INTERNAL_ERROR",
+                        "An unexpected error occurred.");
             }
         }
         return new BatchResponse(List.of(results));

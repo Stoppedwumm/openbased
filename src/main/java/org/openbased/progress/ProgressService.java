@@ -18,8 +18,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Records playback progress and watch history. Updates may carry the time they were recorded on the client
- * (for progress made offline and synced later): that time is clamped to the server clock, an update older than
- * the stored progress is not applied, and the history entry is dated with it.
+ * (for progress made offline and synced later): that time is clamped between the time the media item was
+ * added and the server clock, an update older than the stored progress is not applied, and the history entry is dated
+ * with it.
  */
 @Service
 public class ProgressService {
@@ -65,6 +66,10 @@ public class ProgressService {
             throw ApiException.unprocessable("VALIDATION_FAILED", "position must not exceed duration");
         }
         Instant at = effectiveTime(update.recordedAt(), Instant.now());
+        if (item.getAddedAt() != null && at.isBefore(item.getAddedAt())) {
+            // Nobody watched the item here before it was added: a device with a reset or lagging clock.
+            at = item.getAddedAt();
+        }
         boolean completed = update.completed() != null ? update.completed()
                 : update.duration() != null && update.duration() > 0 && update.position() / update.duration() >= 0.95;
 
