@@ -94,5 +94,9 @@ openbased:
   sync:
     # Removed media IDs are kept this long for incremental sync; clients that synced earlier start over.
     retention: 90d
+  downloads:
+    # Prepared (remuxed or transcoded) downloads are deleted this long after they became ready.
+    retention: 7d
+    max-pending-per-user: 5
   jobs:
     workers: 2

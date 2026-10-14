@@ -61,6 +61,15 @@ public record PlaybackPlan(PlaybackMode mode, String container, String videoCode
                 return new PlaybackPlan(PlaybackMode.REMUX, "webm", null, null);
             }
         }
+        return transcode(file, caps);
+    }
+
+    /** Re-encodes to H.264/AAC in MP4, or VP9/Opus in WebM, whichever the client supports. */
+    public static PlaybackPlan transcode(MediaFile file, Capabilities caps) {
+        if (caps == null) {
+            caps = new Capabilities(Set.of(), Set.of(), Set.of());
+        }
+        String video = file.getVideoCodec() == null ? null : codec(file.getVideoCodec());
         boolean mp4 = caps.containers().isEmpty() || caps.containers().contains("mp4");
         if (mp4 && accepts(caps.videoCodecs(), "h264", video == null) && accepts(caps.audioCodecs(), "aac", false)) {
             return new PlaybackPlan(PlaybackMode.TRANSCODE, "mp4", video == null ? null : "h264", "aac");

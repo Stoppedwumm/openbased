@@ -1,13 +1,7 @@
 package org.openbased.media;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.BasicFileAttributes;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,12 +21,10 @@ import org.openbased.common.Paging;
 import org.openbased.security.AccessService;
 import org.openbased.security.Scopes;
 import org.springframework.core.io.FileSystemResource;
-import org.springframework.core.io.InputStreamResource;
 import org.springframework.core.io.Resource;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.http.CacheControl;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -114,71 +106,8 @@ public class MediaController {
         access.require(Scopes.MEDIA_DOWNLOAD);
         MediaFile file = lookup.file(lookup.media(mediaId), fileId);
         Path path = Path.of(file.getPath());
-        BasicFileAttributes attributes = Files.readAttributes(path, BasicFileAttributes.class);
-        long size = attributes.size();
-        // Second precision, because Last-Modified and If-Range dates have no more.
-        long lastModified = attributes.lastModifiedTime().toMillis() / 1000 * 1000;
-        String etag = etag(size, attributes.lastModifiedTime().toMillis());
-
-        if (request.checkNotModified(etag, lastModified)) {
-            // 304 Not Modified; the status and headers are already set.
-            return null;
-        }
-        ResponseEntity.BodyBuilder response = ResponseEntity.ok()
-                .contentType(org.springframework.http.MediaType.parseMediaType(MediaLookup.contentType(file.getContainer())))
-                .cacheControl(CacheControl.noStore().cachePrivate())
-                .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition(path.getFileName().toString()))
-                .header(HttpHeaders.ACCEPT_RANGES, "bytes")
-                .eTag(etag)
-                .lastModified(lastModified);
-        String ifRange = request.getHeader(HttpHeaders.IF_RANGE);
-        if (request.getHeader(HttpHeaders.RANGE) != null && ifRange != null
-                && !ifRangeMatches(ifRange, etag, lastModified)) {
-            // The client's partial copy is of another version: send the whole file. An InputStreamResource
-            // keeps Spring from applying the Range header.
-            return response.contentLength(size).body(new InputStreamResource(Files.newInputStream(path)));
-        }
-        return response.body(new FileSystemResource(path));
-    }
-
-    /**
-     * {@code attachment} with an ASCII {@code filename} for old clients and the exact name in {@code filename*}
-     * (RFC 6266). Spring's builder RFC 2047-encodes {@code filename}, which RFC 6266 does not allow.
-     */
-    static String contentDisposition(String filename) {
-        StringBuilder ascii = new StringBuilder();
-        StringBuilder encoded = new StringBuilder();
-        filename.codePoints().forEach(c -> ascii.append(
-                c >= 0x20 && c < 0x7f && c != '"' && c != '\\' ? (char) c : '_'));
-        for (byte b : filename.getBytes(StandardCharsets.UTF_8)) {
-            char c = (char) (b & 0xff);
-            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
-                    || "!#$&+-.^_`|~".indexOf(c) >= 0) {
-                encoded.append(c);
-            } else {
-                encoded.append('%').append(String.format("%02X", (int) c));
-            }
-        }
-        return "attachment; filename=\"" + ascii + "\"; filename*=UTF-8''" + encoded;
-    }
-
-    /** A strong validator from size and modification time, which change whenever the file is replaced. */
-    static String etag(long size, long lastModifiedMillis) {
-        return "\"" + Long.toHexString(size) + "-" + Long.toHexString(lastModifiedMillis) + "\"";
-    }
-
-    /** RFC 9110 13.1.5: an entity tag must match strongly; a date must equal Last-Modified exactly. */
-    static boolean ifRangeMatches(String ifRange, String etag, long lastModifiedMillis) {
-        String value = ifRange.trim();
-        if (value.startsWith("\"") || value.startsWith("W/")) {
-            return value.equals(etag);
-        }
-        try {
-            return ZonedDateTime.parse(value, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli()
-                    == lastModifiedMillis;
-        } catch (DateTimeParseException e) {
-            return false;
-        }
+        return FileResponses.attachment(path, path.getFileName().toString(),
+                MediaLookup.contentType(file.getContainer()), request);
     }
 
     static Specification<MediaItem> filter(Set<String> libraryIds, MediaType type, String query, Integer year,
