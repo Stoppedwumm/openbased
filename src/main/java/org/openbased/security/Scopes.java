@@ -16,6 +16,7 @@ public final class Scopes {
 
     public static final String MEDIA_READ = "media.read";
     public static final String MEDIA_STREAM = "media.stream";
+    public static final String MEDIA_DOWNLOAD = "media.download";
     public static final String MEDIA_WRITE = "media.write";
     public static final String MEDIA_DELETE = "media.delete";
 
@@ -37,7 +38,7 @@ public final class Scopes {
 
     public static final Set<String> ALL = new LinkedHashSet<>(List.of(
             OPENID, PROFILE, EMAIL,
-            MEDIA_READ, MEDIA_STREAM, MEDIA_WRITE, MEDIA_DELETE,
+            MEDIA_READ, MEDIA_STREAM, MEDIA_DOWNLOAD, MEDIA_WRITE, MEDIA_DELETE,
             LIBRARY_READ, LIBRARY_WRITE,
             HISTORY_READ, HISTORY_WRITE,
             UPLOAD, USERS_READ, USERS_WRITE,

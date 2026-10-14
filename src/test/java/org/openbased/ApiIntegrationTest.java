@@ -311,6 +311,60 @@ class ApiIntegrationTest {
     }
 
     @Test
+    void downloadOriginalWithResumeValidators() throws Exception {
+        Path dir = mediaDir("download-" + System.nanoTime(), "Heat (1995).mkv", 5000);
+        String libraryId = createLibrary("Downloads", dir, true);
+        scan(libraryId);
+        String mediaId = call("GET", "/api/v1/media?library=" + libraryId, admin, null).json().path("items").get(0)
+                .path("id").asText();
+        String path = "/api/v1/media/" + mediaId + "/download";
+
+        HttpResponse<byte[]> full = download(path, admin);
+        assertThat(full.statusCode()).isEqualTo(200);
+        assertThat(full.body()).hasSize(5000);
+        assertThat(full.headers().firstValue("Content-Length")).hasValue("5000");
+        assertThat(full.headers().firstValue("Content-Disposition"))
+                .hasValueSatisfying(v -> assertThat(v).startsWith("attachment").contains("Heat (1995).mkv"));
+        assertThat(full.headers().firstValue("Accept-Ranges")).hasValue("bytes");
+        String etag = full.headers().firstValue("ETag").orElseThrow();
+        String lastModified = full.headers().firstValue("Last-Modified").orElseThrow();
+        assertThat(etag).startsWith("\"");
+
+        // Resuming the same version, by entity tag or by date.
+        for (String validator : List.of(etag, lastModified)) {
+            HttpResponse<byte[]> part = download(path, admin, "Range", "bytes=4000-", "If-Range", validator);
+            assertThat(part.statusCode()).as(validator).isEqualTo(206);
+            assertThat(part.headers().firstValue("Content-Range")).hasValue("bytes 4000-4999/5000");
+            assertThat(part.body()).hasSize(1000);
+        }
+        assertThat(download(path, admin, "If-None-Match", etag).statusCode()).isEqualTo(304);
+
+        // After the file is replaced, a resume of the old version gets the whole new file.
+        Path file = dir.resolve("Heat (1995).mkv");
+        Files.write(file, new byte[6000]);
+        Files.setLastModifiedTime(file, java.nio.file.attribute.FileTime.from(Instant.now().plusSeconds(5)));
+        HttpResponse<byte[]> replaced = download(path, admin, "Range", "bytes=4000-", "If-Range", etag);
+        assertThat(replaced.statusCode()).isEqualTo(200);
+        assertThat(replaced.body()).hasSize(6000);
+        assertThat(replaced.headers().firstValue("ETag")).isNotEqualTo(java.util.Optional.of(etag));
+        assertThat(download(path, admin, "Range", "bytes=0-9", "If-Range", lastModified).statusCode())
+                .isEqualTo(200);
+
+        // media.download is a separate scope; the USER role holds it by default.
+        assertThat(download(path, token("bob-svc", "media.read media.stream")).statusCode()).isEqualTo(403);
+        assertThat(download(path, token("bob-svc", "media.read media.download")).statusCode()).isEqualTo(200);
+        assertThat(download("/api/v1/media/media_missing/download", admin).statusCode()).isEqualTo(404);
+    }
+
+    private HttpResponse<byte[]> download(String path, String bearer, String... headers) throws Exception {
+        HttpRequest.Builder request = HttpRequest.newBuilder(uri(path)).header("Authorization", "Bearer " + bearer);
+        for (int i = 0; i < headers.length; i += 2) {
+            request.header(headers[i], headers[i + 1]);
+        }
+        return http.send(request.build(), HttpResponse.BodyHandlers.ofByteArray());
+    }
+
+    @Test
     void privateLibrariesAreHiddenFromOtherUsers() throws Exception {
         Path dir = mediaDir("private-" + System.nanoTime(), "Secret Film (2001).mp4", 100);
         String libraryId = createLibrary("Private", dir, false);

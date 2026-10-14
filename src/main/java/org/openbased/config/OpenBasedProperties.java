@@ -33,6 +33,7 @@ public class OpenBasedProperties {
     private final Metadata metadata = new Metadata();
     private final Jobs jobs = new Jobs();
     private final BuiltinClients builtinClients = new BuiltinClients();
+    private final Roles roles = new Roles();
 
     public String getIssuer() { return issuer; }
     public void setIssuer(String issuer) { this.issuer = issuer.endsWith("/") ? issuer.substring(0, issuer.length() - 1) : issuer; }
@@ -49,6 +50,7 @@ public class OpenBasedProperties {
     public Metadata getMetadata() { return metadata; }
     public Jobs getJobs() { return jobs; }
     public BuiltinClients getBuiltinClients() { return builtinClients; }
+    public Roles getRoles() { return roles; }
 
     public Optional<Client> client(String clientId) {
         return clients.stream().filter(c -> c.getClientId().equals(clientId)).findFirst();
@@ -205,6 +207,15 @@ public class OpenBasedProperties {
 
         public boolean isAndroid() { return android; }
         public void setAndroid(boolean android) { this.android = android; }
+    }
+
+    /** Permissions of the built-in roles. {@code ADMIN} always holds every permission. */
+    public static class Roles {
+        /** Permissions of the {@code USER} role; when unset, the defaults in {@code Role.USER} apply. */
+        private Set<String> user;
+
+        public Set<String> getUser() { return user; }
+        public void setUser(Set<String> user) { this.user = user; }
     }
 
     public static class Jobs {
