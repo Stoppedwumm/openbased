@@ -1,5 +1,6 @@
 package org.openbased.progress;
 
+import java.time.Instant;
 import java.util.Collection;
 import java.util.Optional;
 
@@ -11,7 +12,8 @@ import org.springframework.data.jpa.repository.Query;
 
 public interface WatchHistoryRepository extends JpaRepository<WatchHistoryEntry, String> {
 
-    Optional<WatchHistoryEntry> findFirstByUserIdAndMediaIdOrderByWatchedAtDesc(String userId, String mediaId);
+    Optional<WatchHistoryEntry> findFirstByUserIdAndMediaIdAndWatchedAtBetweenOrderByWatchedAtDesc(String userId,
+            String mediaId, Instant from, Instant to);
 
     @Query("""
             select h from WatchHistoryEntry h

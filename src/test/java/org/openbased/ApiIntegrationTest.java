@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -190,6 +191,63 @@ class ApiIntegrationTest {
         assertThat(call("GET", streamUrl, admin, null).status()).isEqualTo(200);
         // Another user cannot use the session.
         assertThat(call("GET", streamUrl, token("bob-svc", "media.stream"), null).status()).isEqualTo(404);
+    }
+
+    @Test
+    void offlineProgressIsSyncedNewestFirst() throws Exception {
+        Path dir = mediaDir("offline-" + System.nanoTime(), "Arrival (2016).mkv", 300);
+        Files.write(dir.resolve("Dune (2021).mkv"), new byte[300]);
+        String libraryId = createLibrary("Offline", dir, true);
+        scan(libraryId);
+        JsonNode items = call("GET", "/api/v1/media?library=" + libraryId + "&sort=title", admin, null).json()
+                .path("items");
+        String arrival = items.get(0).path("id").asText();
+        String dune = items.get(1).path("id").asText();
+        Instant now = Instant.now();
+
+        Response current = call("PUT", "/api/v1/media/" + arrival + "/progress", admin,
+                Map.of("position", 100, "duration", 7200));
+        assertThat(current.json().path("applied").asBoolean()).isTrue();
+
+        // Progress recorded offline yesterday does not replace newer progress, but the viewing is in the history.
+        Instant yesterday = now.minus(Duration.ofDays(1)).truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        Response stale = call("PUT", "/api/v1/media/" + arrival + "/progress", admin,
+                Map.of("position", 50, "duration", 7200, "recordedAt", yesterday.toString()));
+        assertThat(stale.status()).isEqualTo(200);
+        assertThat(stale.json().path("applied").asBoolean()).isFalse();
+        assertThat(stale.json().path("position").asDouble()).isEqualTo(100);
+        assertThat(call("GET", "/api/v1/media/" + arrival + "/progress", admin, null).json().path("position")
+                .asDouble()).isEqualTo(100);
+        List<Instant> watched = new ArrayList<>();
+        for (JsonNode h : call("GET", "/api/v1/history?pageSize=200", admin, null).json().path("items")) {
+            if (arrival.equals(h.path("mediaId").asText())) {
+                watched.add(Instant.parse(h.path("watchedAt").asText()));
+            }
+        }
+        assertThat(watched).hasSize(2).contains(yesterday);
+
+        // A time ahead of the server's clock is clamped to it.
+        Response future = call("PUT", "/api/v1/media/" + arrival + "/progress", admin,
+                Map.of("position", 200, "recordedAt", now.plus(Duration.ofDays(1)).toString()));
+        assertThat(future.json().path("applied").asBoolean()).isTrue();
+        assertThat(Instant.parse(future.json().path("updatedAt").asText())).isBefore(now.plus(Duration.ofMinutes(5)));
+
+        // Batch updates are applied oldest first and fail one by one.
+        Response batch = call("POST", "/api/v1/progress/batch", admin, Map.of("updates", List.of(
+                Map.of("mediaId", dune, "position", 400, "recordedAt", now.minus(Duration.ofHours(1)).toString()),
+                Map.of("mediaId", dune, "position", 350, "recordedAt", now.minus(Duration.ofHours(2)).toString()),
+                Map.of("mediaId", dune, "position", 900, "duration", 600),
+                Map.of("mediaId", "media_missing", "position", 1))));
+        assertThat(batch.status()).isEqualTo(200);
+        JsonNode results = batch.json().path("results");
+        assertThat(results.findValuesAsText("status")).containsExactly("APPLIED", "APPLIED", "FAILED", "FAILED");
+        assertThat(results.get(2).path("error").asText()).isEqualTo("VALIDATION_FAILED");
+        assertThat(results.get(3).path("error").asText()).isEqualTo("MEDIA_NOT_FOUND");
+        assertThat(call("GET", "/api/v1/media/" + dune + "/progress", admin, null).json().path("position")
+                .asDouble()).isEqualTo(400);
+
+        assertThat(call("POST", "/api/v1/progress/batch", token("admin-svc", "history.read"),
+                Map.of("updates", List.of())).status()).isEqualTo(403);
     }
 
     @Test

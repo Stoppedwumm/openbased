@@ -166,7 +166,7 @@ timeout, or on restart.
 | `POST /api/v1/media/{id}/metadata/refresh` | `library.write` |
 | `GET /api/v1/media/{id}/stream` | `media.stream` |
 | `POST /api/v1/playback/sessions`, `GET`/`DELETE /api/v1/playback/{id}`, `GET /api/v1/playback/{id}/stream` | `media.stream` |
-| `PUT /api/v1/media/{id}/progress` | `history.write` |
+| `PUT /api/v1/media/{id}/progress`, `POST /api/v1/progress/batch` | `history.write` |
 | `GET /api/v1/media/{id}/progress`, `GET /api/v1/history`, `GET /api/v1/continue-watching` | `history.read` |
 | `POST`/`GET`/`PATCH`/`DELETE /api/v1/uploads…` | `upload` |
 | `GET`/`POST`/`DELETE /api/v1/tokens…` | `profile` |
@@ -188,6 +188,18 @@ The `requestId` is also returned in the `X-Request-Id` header. List endpoints ta
 
 - `duration` on media and files: milliseconds. `runtime`: minutes.
 - Playback progress `position`/`duration`: seconds. If `completed` is omitted it is set once 95% is reached.
+
+### Offline progress
+
+Clients that queue progress while offline send the time each update was recorded as `recordedAt`
+(ISO-8601). The server clamps it to its own clock, keeps the newest progress per media item (an update
+older than the stored one returns `"applied": false` with the stored values), and dates the watch-history
+entry with it. Without `recordedAt` the server's time is used.
+
+`POST /api/v1/progress/batch` takes `{"updates": [{"mediaId", "position", "duration", "completed",
+"recordedAt"}, …]}` (up to 500) and applies them oldest first. Each update succeeds or fails on its own; the
+response has one result per update, in request order, with `status` `APPLIED`, `IGNORED` (older than the
+stored progress) or `FAILED` (with `error` and `message`).
 
 ### Playback
 
