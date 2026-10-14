@@ -318,6 +318,13 @@ file request. Preparations interrupted by a restart are `FAILED`; request them a
   flags; other words become the title. SubRip is converted to WebVTT; UTF-8, UTF-16 with BOM and Windows-1252
   are recognised.
 
+### Artwork sizes
+
+`GET /api/v1/artwork/{id}?w=<pixels>` returns the image scaled down to that width, rounded up to 92, 154, 185,
+342, 500, 780 or 1280 so that only these sizes are stored. Images are never enlarged; wider requests, and
+formats the server cannot decode (WebP), get the original. Scaled copies are JPEG, or PNG when the image has
+transparency, and are cached in `data-dir/artwork-cache`; a replaced image is scaled again, and copies of
+removed artwork are deleted daily.
 ### Uploads
 
 1. `POST /api/v1/uploads` with `filename`, `size`, `libraryId` returns `id` and `chunkSize`.

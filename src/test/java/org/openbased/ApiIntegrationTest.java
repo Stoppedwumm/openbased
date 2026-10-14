@@ -365,68 +365,65 @@ class ApiIntegrationTest {
     }
 
     @Test
-    void incrementalSyncReportsChangesAndRemovals() throws Exception {
-        Path dir = mediaDir("sync-" + System.nanoTime(), "Arrival (2016).mkv", 100);
-        Files.write(dir.resolve("Dune (2021).mkv"), new byte[100]);
-        String libraryId = createLibrary("Sync", dir, true);
+    void artworkIsScaledToFixedWidths() throws Exception {
+        Path dir = mediaDir("artwork-" + System.nanoTime(), "Heat (1995).mkv", 100);
+        Path poster = dir.resolve("Heat (1995)-poster.jpg");
+        writeImage(poster, 1000, 1500, java.awt.Color.RED, false);
+        Path pngDir = mediaDir("artwork-png-" + System.nanoTime(), "Up (2009).mkv", 100);
+        writeImage(pngDir.resolve("Up (2009)-poster.png"), 600, 900, new java.awt.Color(0, 128, 0, 100), true);
+        String libraryId = createLibrary("Artwork", dir, true);
         scan(libraryId);
-        Map<String, String> ids = new java.util.HashMap<>();
-        for (JsonNode m : call("GET", "/api/v1/media?library=" + libraryId, admin, null).json().path("items")) {
-            ids.put(m.path("title").asText(), m.path("id").asText());
-        }
-        Path privateDir = mediaDir("sync-private-" + System.nanoTime(), "Memento (2000).mkv", 100);
-        String privateLibrary = createLibrary("Sync private", privateDir, false);
-        scan(privateLibrary);
-        String memento = call("GET", "/api/v1/media?library=" + privateLibrary, admin, null).json().path("items")
-                .get(0).path("id").asText();
-        Thread.sleep(5);
-        Instant since = Instant.now();
-        String bob = token("bob-svc", "media.read library.read");
+        String pngLibrary = createLibrary("Artwork PNG", pngDir, true);
+        scan(pngLibrary);
+        String url = call("GET", "/api/v1/media?library=" + libraryId, admin, null).json().path("items").get(0)
+                .path("poster").asText();
+        String pngUrl = call("GET", "/api/v1/media?library=" + pngLibrary, admin, null).json().path("items").get(0)
+                .path("poster").asText();
+        assertThat(url).startsWith("/api/v1/artwork/");
 
-        assertThat(call("GET", "/api/v1/media?library=" + libraryId + "&updatedSince=" + since, admin, null).json()
-                .path("total").asInt()).isZero();
-        JsonNode nothing = call("GET", "/api/v1/media/removed?since=" + since, admin, null).json();
-        assertThat(nothing.path("resetRequired").asBoolean()).isFalse();
-        assertThat(nothing.path("items").findValuesAsText("mediaId")).doesNotContain(ids.get("Arrival"));
-        assertThat(Instant.parse(nothing.path("syncedAt").asText())).isBefore(Instant.now());
+        assertThat(image(download(url, admin)).getWidth()).isEqualTo(1000);
+        HttpResponse<byte[]> small = download(url + "?w=300", admin);
+        assertThat(small.headers().firstValue("Content-Type")).hasValue("image/jpeg");
+        assertThat(small.headers().firstValue("Cache-Control").orElseThrow()).contains("private");
+        java.awt.image.BufferedImage scaled = image(small);
+        assertThat(scaled.getWidth()).isEqualTo(342);
+        assertThat(scaled.getHeight()).isEqualTo(513);
+        assertThat(new java.awt.Color(scaled.getRGB(171, 256)).getRed()).isGreaterThan(200);
+        // Served from the cache the second time.
+        assertThat(download(url + "?w=342", admin).body()).isEqualTo(small.body());
+        // Never enlarged; requests wider than the largest fixed width get the original.
+        assertThat(image(download(url + "?w=1100", admin)).getWidth()).isEqualTo(1000);
+        assertThat(image(download(url + "?w=5000", admin)).getWidth()).isEqualTo(1000);
 
-        Files.delete(dir.resolve("Arrival (2016).mkv"));
-        Files.write(dir.resolve("Tenet (2020).mkv"), new byte[100]);
-        scan(libraryId);
-        Files.delete(privateDir.resolve("Memento (2000).mkv"));
-        scan(privateLibrary);
+        // Transparent images stay PNG.
+        HttpResponse<byte[]> png = download(pngUrl + "?w=100", admin);
+        assertThat(png.headers().firstValue("Content-Type")).hasValue("image/png");
+        assertThat(image(png).getWidth()).isEqualTo(154);
+        assertThat(image(png).getColorModel().hasAlpha()).isTrue();
 
-        JsonNode changed = call("GET", "/api/v1/media?library=" + libraryId + "&updatedSince=" + since, admin, null)
-                .json();
-        assertThat(changed.path("items").findValuesAsText("title")).containsExactly("Tenet");
-        JsonNode removed = call("GET", "/api/v1/media/removed?since=" + since, admin, null).json();
-        assertThat(removed.path("resetRequired").asBoolean()).isFalse();
-        assertThat(removed.path("items").findValuesAsText("mediaId")).contains(ids.get("Arrival"), memento);
-        // Removals in libraries a user cannot see are not listed to them.
-        JsonNode removedForBob = call("GET", "/api/v1/media/removed?since=" + since, bob, null).json();
-        assertThat(removedForBob.path("items").findValuesAsText("mediaId")).contains(ids.get("Arrival"))
-                .doesNotContain(memento);
+        // A replaced image is scaled again rather than served from the cache.
+        writeImage(poster, 800, 1200, java.awt.Color.BLUE, false);
+        Files.setLastModifiedTime(poster, java.nio.file.attribute.FileTime.from(Instant.now().plusSeconds(5)));
+        java.awt.image.BufferedImage replaced = image(download(url + "?w=300", admin));
+        assertThat(new java.awt.Color(replaced.getRGB(171, 256)).getBlue()).isGreaterThan(200);
 
-        // Changes the lists cannot describe require a full sync.
-        assertThat(call("GET", "/api/v1/media/removed?since=" + since.minus(Duration.ofDays(100)), admin, null)
-                .json().path("resetRequired").asBoolean()).isTrue();
-        String bobId = null;
-        for (JsonNode u : call("GET", "/api/v1/users?pageSize=200", admin, null).json().path("items")) {
-            bobId = "bob".equals(u.path("username").asText()) ? u.path("id").asText() : bobId;
-        }
-        Instant beforeRoles = Instant.now();
-        Response promoted = call("PATCH", "/api/v1/users/" + bobId, admin, Map.of("roles", List.of("USER", "ADMIN")));
-        assertThat(promoted.status()).as(promoted.body()).isEqualTo(200);
-        assertThat(call("PATCH", "/api/v1/users/" + bobId, admin, Map.of("roles", List.of("USER"))).status())
-                .isEqualTo(200);
-        assertThat(call("GET", "/api/v1/media/removed?since=" + beforeRoles, bob, null).json()
-                .path("resetRequired").asBoolean()).isTrue();
-        assertThat(call("GET", "/api/v1/media/removed?since=" + beforeRoles, admin, null).json()
-                .path("resetRequired").asBoolean()).isFalse();
-        call("PATCH", "/api/v1/libraries/" + privateLibrary, admin, Map.of("access", Map.of("allUsers", true)));
-        assertThat(call("GET", "/api/v1/media/removed?since=" + beforeRoles, admin, null).json()
-                .path("resetRequired").asBoolean()).isTrue();
-        assertThat(call("GET", "/api/v1/media/removed", admin, null).status()).isEqualTo(400);
+        assertThat(download(url + "?w=0", admin).statusCode()).isEqualTo(400);
+    }
+
+    private static void writeImage(Path path, int width, int height, java.awt.Color color, boolean alpha)
+            throws IOException {
+        java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(width, height,
+                alpha ? java.awt.image.BufferedImage.TYPE_INT_ARGB : java.awt.image.BufferedImage.TYPE_INT_RGB);
+        java.awt.Graphics2D g = image.createGraphics();
+        g.setColor(color);
+        g.fillRect(0, 0, width, height);
+        g.dispose();
+        javax.imageio.ImageIO.write(image, alpha ? "png" : "jpg", path.toFile());
+    }
+
+    private static java.awt.image.BufferedImage image(HttpResponse<byte[]> response) throws IOException {
+        assertThat(response.statusCode()).isEqualTo(200);
+        return javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(response.body()));
     }
 
     @Test
@@ -553,6 +550,71 @@ class ApiIntegrationTest {
         } catch (IOException | InterruptedException e) {
             return false;
         }
+    }
+
+    @Test
+    void incrementalSyncReportsChangesAndRemovals() throws Exception {
+        Path dir = mediaDir("sync-" + System.nanoTime(), "Arrival (2016).mkv", 100);
+        Files.write(dir.resolve("Dune (2021).mkv"), new byte[100]);
+        String libraryId = createLibrary("Sync", dir, true);
+        scan(libraryId);
+        Map<String, String> ids = new java.util.HashMap<>();
+        for (JsonNode m : call("GET", "/api/v1/media?library=" + libraryId, admin, null).json().path("items")) {
+            ids.put(m.path("title").asText(), m.path("id").asText());
+        }
+        Path privateDir = mediaDir("sync-private-" + System.nanoTime(), "Memento (2000).mkv", 100);
+        String privateLibrary = createLibrary("Sync private", privateDir, false);
+        scan(privateLibrary);
+        String memento = call("GET", "/api/v1/media?library=" + privateLibrary, admin, null).json().path("items")
+                .get(0).path("id").asText();
+        Thread.sleep(5);
+        Instant since = Instant.now();
+        String bob = token("bob-svc", "media.read library.read");
+
+        assertThat(call("GET", "/api/v1/media?library=" + libraryId + "&updatedSince=" + since, admin, null).json()
+                .path("total").asInt()).isZero();
+        JsonNode nothing = call("GET", "/api/v1/media/removed?since=" + since, admin, null).json();
+        assertThat(nothing.path("resetRequired").asBoolean()).isFalse();
+        assertThat(nothing.path("items").findValuesAsText("mediaId")).doesNotContain(ids.get("Arrival"));
+        assertThat(Instant.parse(nothing.path("syncedAt").asText())).isBefore(Instant.now());
+
+        Files.delete(dir.resolve("Arrival (2016).mkv"));
+        Files.write(dir.resolve("Tenet (2020).mkv"), new byte[100]);
+        scan(libraryId);
+        Files.delete(privateDir.resolve("Memento (2000).mkv"));
+        scan(privateLibrary);
+
+        JsonNode changed = call("GET", "/api/v1/media?library=" + libraryId + "&updatedSince=" + since, admin, null)
+                .json();
+        assertThat(changed.path("items").findValuesAsText("title")).containsExactly("Tenet");
+        JsonNode removed = call("GET", "/api/v1/media/removed?since=" + since, admin, null).json();
+        assertThat(removed.path("resetRequired").asBoolean()).isFalse();
+        assertThat(removed.path("items").findValuesAsText("mediaId")).contains(ids.get("Arrival"), memento);
+        // Removals in libraries a user cannot see are not listed to them.
+        JsonNode removedForBob = call("GET", "/api/v1/media/removed?since=" + since, bob, null).json();
+        assertThat(removedForBob.path("items").findValuesAsText("mediaId")).contains(ids.get("Arrival"))
+                .doesNotContain(memento);
+
+        // Changes the lists cannot describe require a full sync.
+        assertThat(call("GET", "/api/v1/media/removed?since=" + since.minus(Duration.ofDays(100)), admin, null)
+                .json().path("resetRequired").asBoolean()).isTrue();
+        String bobId = null;
+        for (JsonNode u : call("GET", "/api/v1/users?pageSize=200", admin, null).json().path("items")) {
+            bobId = "bob".equals(u.path("username").asText()) ? u.path("id").asText() : bobId;
+        }
+        Instant beforeRoles = Instant.now();
+        Response promoted = call("PATCH", "/api/v1/users/" + bobId, admin, Map.of("roles", List.of("USER", "ADMIN")));
+        assertThat(promoted.status()).as(promoted.body()).isEqualTo(200);
+        assertThat(call("PATCH", "/api/v1/users/" + bobId, admin, Map.of("roles", List.of("USER"))).status())
+                .isEqualTo(200);
+        assertThat(call("GET", "/api/v1/media/removed?since=" + beforeRoles, bob, null).json()
+                .path("resetRequired").asBoolean()).isTrue();
+        assertThat(call("GET", "/api/v1/media/removed?since=" + beforeRoles, admin, null).json()
+                .path("resetRequired").asBoolean()).isFalse();
+        call("PATCH", "/api/v1/libraries/" + privateLibrary, admin, Map.of("access", Map.of("allUsers", true)));
+        assertThat(call("GET", "/api/v1/media/removed?since=" + beforeRoles, admin, null).json()
+                .path("resetRequired").asBoolean()).isTrue();
+        assertThat(call("GET", "/api/v1/media/removed", admin, null).status()).isEqualTo(400);
     }
 
     @Test
