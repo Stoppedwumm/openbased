@@ -129,9 +129,36 @@ token with `DELETE /api/v1/tokens/current`; this works with any personal access 
 Discovery is at `/.well-known/openid-configuration`, keys at `/oauth2/jwks`, and UserInfo at
 `/api/v1/userinfo`.
 
+### Native apps
+
+The server has a built-in public client for the official Android app, so it works on every installation
+without editing `application.yml`:
+
+| Client ID | Redirect URI | Grants |
+| --- | --- | --- |
+| `openbased-android` | `org.openbased.android:/oauth2redirect` | `authorization_code` (PKCE required), `refresh_token` |
+
+Set `openbased.builtin-clients.android: false` to disable it, or define a client with the same ID under
+`openbased.clients` to change it.
+
+Public clients registered for the `refresh_token` grant receive refresh tokens:
+
+- Refresh with `grant_type=refresh_token&refresh_token=…&client_id=…`; no secret is needed.
+- Refresh tokens rotate: every refresh returns a new one, and the previous access token stops working.
+- Using a refresh token that was already rotated away revokes the whole sign-in (reuse detection). Apps
+  must therefore never refresh twice in parallel with the same token.
+- Refresh tokens expire after `openbased.tokens.refresh-token-ttl` (30 days) without use; each refresh
+  starts the period again.
+- To sign out, revoke the refresh token at `POST /oauth2/revoke` with `token=…&client_id=…`. The sign-in's
+  access tokens stop working at once.
+
+Sign-ins are stored in the database, so they survive restarts. Authorization codes and access, refresh and
+device codes are stored as SHA-256 hashes.
+
 Every protected request is checked for:
 
-1. a valid, unexpired token (signed access token issued by this server, or an unrevoked PAT);
+1. a valid, unexpired token (an access token signed by this server whose sign-in has not been revoked, or
+   an unrevoked PAT);
 2. the endpoint's scope on the token;
 3. the user's permission of the same name (scopes and permissions share names);
 4. access to the resource. Users see a library when it is shared with all users, they are a member, or
@@ -256,12 +283,7 @@ so only `plugins.manage` holders can install or enable them.
 
 ## Known gaps
 
-- OAuth2 authorizations, consents and playback sessions are kept in memory: signed-in users must
-  re-authorize after a restart (access tokens stay valid until they expire because the signing key is
-  persisted).
-- Spring Authorization Server does not issue refresh tokens to public clients, so refresh tokens are only
-  available to confidential clients. Public clients re-run the authorization flow; the sign-in session
-  makes this silent.
+- Playback sessions are kept in memory and end when the server restarts.
 - The token endpoint's `scope` field echoes the requested scopes; the access token itself only carries
   those the user holds.
 - Artwork is sent with `Cache-Control: private, max-age=86400` instead of `public` so that shared caches

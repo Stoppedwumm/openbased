@@ -68,6 +68,9 @@ openbased:
     #   grant-types: [client_credentials]
     #   scopes: [media.read, library.read]
     #   service-user: automation
+  # OAuth2 clients for official apps, registered in addition to "clients" above.
+  builtin-clients:
+    android: true
   rate-limit:
     enabled: true
     limit: 1000

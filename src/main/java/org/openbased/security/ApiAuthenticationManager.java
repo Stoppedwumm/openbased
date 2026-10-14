@@ -13,23 +13,28 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.openbased.security.oauth.JpaAuthorizationService;
 import org.springframework.security.oauth2.server.resource.authentication.BearerTokenAuthenticationToken;
 import org.springframework.security.oauth2.server.resource.BearerTokenErrors;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationProvider;
 
 /**
  * Authenticates bearer tokens: {@code ob_pat_} personal access tokens are looked up in the database,
- * everything else is validated as a signed OAuth2 access token issued by this server.
+ * everything else is validated as a signed OAuth2 access token issued by this server whose authorization has
+ * not been revoked.
  */
 public class ApiAuthenticationManager implements AuthenticationManager {
 
     private final TokenService tokens;
     private final UserRepository users;
     private final JwtAuthenticationProvider jwtProvider;
+    private final JpaAuthorizationService authorizations;
 
-    public ApiAuthenticationManager(TokenService tokens, UserRepository users, JwtDecoder jwtDecoder) {
+    public ApiAuthenticationManager(TokenService tokens, UserRepository users, JwtDecoder jwtDecoder,
+            JpaAuthorizationService authorizations) {
         this.tokens = tokens;
         this.users = users;
+        this.authorizations = authorizations;
         this.jwtProvider = new JwtAuthenticationProvider(jwtDecoder);
         this.jwtProvider.setJwtAuthenticationConverter(this::fromJwt);
     }
@@ -52,6 +57,11 @@ public class ApiAuthenticationManager implements AuthenticationManager {
     }
 
     private ApiAuthentication fromJwt(Jwt jwt) {
+        // A valid signature is not enough: the sign-in must still exist, so revoking a refresh token, signing out
+        // an app or reuse detection takes effect immediately rather than when the access token expires.
+        if (!authorizations.isAccessTokenActive(jwt.getTokenValue())) {
+            throw invalid("The access token was revoked");
+        }
         String subject = jwt.getSubject();
         String clientId = clientId(jwt);
         String userId = null;

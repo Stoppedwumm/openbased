@@ -32,6 +32,7 @@ public class OpenBasedProperties {
     private final Playback playback = new Playback();
     private final Metadata metadata = new Metadata();
     private final Jobs jobs = new Jobs();
+    private final BuiltinClients builtinClients = new BuiltinClients();
 
     public String getIssuer() { return issuer; }
     public void setIssuer(String issuer) { this.issuer = issuer.endsWith("/") ? issuer.substring(0, issuer.length() - 1) : issuer; }
@@ -47,6 +48,7 @@ public class OpenBasedProperties {
     public Playback getPlayback() { return playback; }
     public Metadata getMetadata() { return metadata; }
     public Jobs getJobs() { return jobs; }
+    public BuiltinClients getBuiltinClients() { return builtinClients; }
 
     public Optional<Client> client(String clientId) {
         return clients.stream().filter(c -> c.getClientId().equals(clientId)).findFirst();
@@ -194,6 +196,15 @@ public class OpenBasedProperties {
             public String getImageBaseUrl() { return imageBaseUrl; }
             public void setImageBaseUrl(String imageBaseUrl) { this.imageBaseUrl = imageBaseUrl; }
         }
+    }
+
+    /** OAuth2 clients for official apps, registered unless disabled or overridden in {@code clients}. */
+    public static class BuiltinClients {
+        /** {@code openbased-android}: public client, redirect URI {@code org.openbased.android:/oauth2redirect}. */
+        private boolean android = true;
+
+        public boolean isAndroid() { return android; }
+        public void setAndroid(boolean android) { this.android = android; }
     }
 
     public static class Jobs {

@@ -84,6 +84,9 @@ class ApiIntegrationTest {
     @Autowired
     org.openbased.media.MediaItemRepository mediaItems;
 
+    @Autowired
+    org.openbased.security.oauth.AuthorizationRepository authorizationRepository;
+
     private final HttpClient http = HttpClient.newBuilder().proxy(HttpClient.Builder.NO_PROXY).build();
     private String admin;
 
@@ -515,7 +518,109 @@ class ApiIntegrationTest {
         assertThat(call("DELETE", "/api/v1/plugins/echo", admin, null).status()).isEqualTo(204);
     }
 
+    @Test
+    void nativeAppSignInWithRotatingRefreshTokens() throws Exception {
+        String redirect = "org.openbased.android:/oauth2redirect";
+        JsonNode first = signIn("openbased-android", redirect, "bob", "bobpassword1");
+        String access = first.path("access_token").asText();
+        String refresh = first.path("refresh_token").asText();
+        assertThat(refresh).isNotBlank();
+        assertThat(call("GET", "/api/v1/users/me", access, null).json().path("username").asText()).isEqualTo("bob");
+
+        // Tokens are persisted, with secrets hashed.
+        assertThat(authorizationRepository.findAll()).anySatisfy(a -> {
+            assertThat(a.getPrincipalName()).isEqualTo("bob");
+            assertThat(a.getRefreshTokenValue()).startsWith("sha256:").isNotEqualTo(refresh);
+        });
+
+        // Refreshing needs only client_id and rotates the refresh token; the old access token stops working.
+        Response rotated = tokenRequest(Map.of("grant_type", "refresh_token", "refresh_token", refresh,
+                "client_id", "openbased-android"));
+        assertThat(rotated.status()).as(rotated.body()).isEqualTo(200);
+        String access2 = rotated.json().path("access_token").asText();
+        String refresh2 = rotated.json().path("refresh_token").asText();
+        assertThat(refresh2).isNotBlank().isNotEqualTo(refresh);
+        assertThat(call("GET", "/api/v1/users/me", access2, null).status()).isEqualTo(200);
+        assertThat(call("GET", "/api/v1/users/me", access, null).status()).isEqualTo(401);
+
+        // Using a rotated refresh token again revokes the whole sign-in.
+        Response reused = tokenRequest(Map.of("grant_type", "refresh_token", "refresh_token", refresh,
+                "client_id", "openbased-android"));
+        assertThat(reused.status()).isEqualTo(400);
+        assertThat(reused.json().path("error").asText()).isEqualTo("invalid_grant");
+        assertThat(tokenRequest(Map.of("grant_type", "refresh_token", "refresh_token", refresh2,
+                "client_id", "openbased-android")).status()).isEqualTo(400);
+        assertThat(call("GET", "/api/v1/users/me", access2, null).status()).isEqualTo(401);
+
+        // Signing out: a public client revokes its refresh token with only client_id.
+        JsonNode second = signIn("openbased-android", redirect, "bob", "bobpassword1");
+        Response revoked = formPost("/oauth2/revoke", Map.of("token", second.path("refresh_token").asText(),
+                "token_type_hint", "refresh_token", "client_id", "openbased-android"));
+        assertThat(revoked.status()).as(revoked.body()).isEqualTo(200);
+        assertThat(call("GET", "/api/v1/users/me", second.path("access_token").asText(), null).status()).isEqualTo(401);
+        assertThat(tokenRequest(Map.of("grant_type", "refresh_token", "refresh_token",
+                second.path("refresh_token").asText(), "client_id", "openbased-android")).status()).isEqualTo(400);
+
+        // Unknown clients and clients that need a secret cannot use the public flow.
+        assertThat(tokenRequest(Map.of("grant_type", "refresh_token", "refresh_token", "x", "client_id", "nope"))
+                .status()).isEqualTo(401);
+        assertThat(tokenRequest(Map.of("grant_type", "refresh_token", "refresh_token", "x", "client_id", "bob-svc"))
+                .status()).isEqualTo(401);
+    }
+
     // --- helpers
+
+    /** Runs Authorization Code + PKCE through the sign-in page, as a browser would, and returns the token response. */
+    private JsonNode signIn(String clientId, String redirectUri, String username, String password) throws Exception {
+        HttpClient browser = HttpClient.newBuilder().proxy(HttpClient.Builder.NO_PROXY)
+                .cookieHandler(new java.net.CookieManager()).build();
+        byte[] random = new byte[32];
+        new java.security.SecureRandom().nextBytes(random);
+        String verifier = Base64.getUrlEncoder().withoutPadding().encodeToString(random);
+        String challenge = Base64.getUrlEncoder().withoutPadding().encodeToString(
+                java.security.MessageDigest.getInstance("SHA-256").digest(verifier.getBytes(StandardCharsets.US_ASCII)));
+        String authorize = "/oauth2/authorize?" + form(Map.of("client_id", clientId, "redirect_uri", redirectUri,
+                "response_type", "code", "scope", "openid profile media.read", "state", "s1",
+                "code_challenge", challenge, "code_challenge_method", "S256"));
+        HttpResponse<String> step = browser.send(HttpRequest.newBuilder(uri(authorize)).header("Accept", "text/html")
+                .build(), HttpResponse.BodyHandlers.ofString());
+        assertThat(step.headers().firstValue("Location")).hasValueSatisfying(l -> assertThat(l).endsWith("/login"));
+        String loginPage = browser.send(HttpRequest.newBuilder(uri("/login")).build(),
+                HttpResponse.BodyHandlers.ofString()).body();
+        java.util.regex.Matcher csrf = java.util.regex.Pattern.compile("name=\"_csrf\" type=\"hidden\" value=\"([^\"]+)\"")
+                .matcher(loginPage);
+        assertThat(csrf.find()).isTrue();
+        step = browser.send(HttpRequest.newBuilder(uri("/login")).header("Content-Type", "application/x-www-form-urlencoded")
+                .POST(HttpRequest.BodyPublishers.ofString(form(Map.of("username", username, "password", password,
+                        "_csrf", csrf.group(1))))).build(), HttpResponse.BodyHandlers.ofString());
+        String next = step.headers().firstValue("Location").orElseThrow();
+        step = browser.send(HttpRequest.newBuilder(URI.create(next)).header("Accept", "text/html").build(),
+                HttpResponse.BodyHandlers.ofString());
+        String callback = step.headers().firstValue("Location").orElseThrow();
+        assertThat(callback).startsWith(redirectUri + "?");
+        String code = java.net.URLDecoder.decode(callback.replaceAll(".*[?&]code=([^&]+).*", "$1"), StandardCharsets.UTF_8);
+        Response token = tokenRequest(Map.of("grant_type", "authorization_code", "code", code,
+                "redirect_uri", redirectUri, "client_id", clientId, "code_verifier", verifier));
+        assertThat(token.status()).as(token.body()).isEqualTo(200);
+        return token.json();
+    }
+
+    private Response tokenRequest(Map<String, String> params) throws Exception {
+        return formPost("/oauth2/token", params);
+    }
+
+    private Response formPost(String path, Map<String, String> params) throws Exception {
+        return toResponse(http.send(HttpRequest.newBuilder(uri(path))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .POST(HttpRequest.BodyPublishers.ofString(form(params))).build(), HttpResponse.BodyHandlers.ofString()));
+    }
+
+    private static String form(Map<String, String> params) {
+        return params.entrySet().stream()
+                .map(e -> URLEncoder.encode(e.getKey(), StandardCharsets.UTF_8) + "="
+                        + URLEncoder.encode(e.getValue(), StandardCharsets.UTF_8))
+                .collect(java.util.stream.Collectors.joining("&"));
+    }
 
     private Path mediaDir(String name, String file, int size) throws IOException {
         Path dir = Files.createDirectories(TMP.resolve(name));

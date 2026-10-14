@@ -14,6 +14,11 @@ import com.nimbusds.jose.jwk.source.JWKSource;
 import com.nimbusds.jose.proc.SecurityContext;
 
 import org.openbased.common.ErrorWriter;
+import org.openbased.security.oauth.JpaAuthorizationService;
+import org.openbased.security.oauth.PublicClientAuthentication;
+import org.openbased.security.oauth.PublicClientRefreshTokenGenerator;
+import org.openbased.security.oauth.RefreshTokenReuseDetector;
+import org.openbased.security.oauth.UsedRefreshTokenRepository;
 import org.openbased.config.OpenBasedProperties;
 import org.openbased.token.TokenService;
 import org.openbased.user.User;
@@ -40,10 +45,6 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
-import org.springframework.security.oauth2.server.authorization.InMemoryOAuth2AuthorizationConsentService;
-import org.springframework.security.oauth2.server.authorization.InMemoryOAuth2AuthorizationService;
-import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationConsentService;
-import org.springframework.security.oauth2.server.authorization.OAuth2AuthorizationService;
 import org.springframework.security.oauth2.server.authorization.OAuth2TokenType;
 import org.springframework.security.oauth2.server.authorization.client.InMemoryRegisteredClientRepository;
 import org.springframework.security.oauth2.server.authorization.client.RegisteredClient;
@@ -52,7 +53,11 @@ import org.springframework.security.oauth2.server.authorization.config.annotatio
 import org.springframework.security.oauth2.server.authorization.settings.AuthorizationServerSettings;
 import org.springframework.security.oauth2.server.authorization.settings.ClientSettings;
 import org.springframework.security.oauth2.server.authorization.settings.TokenSettings;
+import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
+import org.springframework.security.oauth2.server.authorization.token.DelegatingOAuth2TokenGenerator;
 import org.springframework.security.oauth2.server.authorization.token.JwtEncodingContext;
+import org.springframework.security.oauth2.server.authorization.token.JwtGenerator;
+import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenGenerator;
 import org.springframework.security.oauth2.server.authorization.token.OAuth2TokenCustomizer;
 import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
@@ -78,12 +83,21 @@ public class SecurityConfig {
 
     @Bean
     @Order(1)
-    SecurityFilterChain authorizationServerChain(HttpSecurity http, OpenBasedProperties properties) throws Exception {
+    SecurityFilterChain authorizationServerChain(HttpSecurity http, OpenBasedProperties properties,
+            AuthorizationServerSettings settings, RegisteredClientRepository clients,
+            UsedRefreshTokenRepository usedRefreshTokens, JpaAuthorizationService authorizations) throws Exception {
         OAuth2AuthorizationServerConfigurer authorizationServer = OAuth2AuthorizationServerConfigurer.authorizationServer();
         http.securityMatcher(authorizationServer.getEndpointsMatcher())
-                .with(authorizationServer, server -> server.oidc(oidc -> oidc
-                        .providerConfigurationEndpoint(endpoint -> endpoint.providerConfigurationCustomizer(
-                                config -> config.userInfoEndpoint(properties.getIssuer() + "/api/v1/userinfo")))))
+                .with(authorizationServer, server -> server
+                        // Public clients (native and TV apps) refresh and revoke tokens with only their client_id.
+                        .clientAuthentication(client -> client
+                                .authenticationConverters(c -> c.add(0, new PublicClientAuthentication.Converter(settings)))
+                                .authenticationProviders(p -> p.add(0, new PublicClientAuthentication.Provider(clients))))
+                        .tokenEndpoint(token -> token.authenticationProviders(
+                                p -> p.add(0, new RefreshTokenReuseDetector(usedRefreshTokens, authorizations))))
+                        .oidc(oidc -> oidc
+                                .providerConfigurationEndpoint(endpoint -> endpoint.providerConfigurationCustomizer(
+                                        config -> config.userInfoEndpoint(properties.getIssuer() + "/api/v1/userinfo")))))
                 .authorizeHttpRequests(authorize -> authorize.anyRequest().authenticated())
                 .cors(Customizer.withDefaults())
                 .exceptionHandling(exceptions -> exceptions.defaultAuthenticationEntryPointFor(
@@ -96,9 +110,10 @@ public class SecurityConfig {
     @Bean
     @Order(2)
     SecurityFilterChain apiChain(HttpSecurity http, TokenService tokens, UserRepository users, JwtDecoder jwtDecoder,
-            ErrorWriter errors, OpenBasedProperties properties) throws Exception {
+            ErrorWriter errors, OpenBasedProperties properties, JpaAuthorizationService authorizations) throws Exception {
         ApiErrorHandlers handlers = new ApiErrorHandlers(errors);
-        ApiAuthenticationManager authenticationManager = new ApiAuthenticationManager(tokens, users, jwtDecoder);
+        ApiAuthenticationManager authenticationManager = new ApiAuthenticationManager(tokens, users, jwtDecoder,
+                authorizations);
         http.securityMatcher("/api/**")
                 .csrf(csrf -> csrf.disable())
                 .cors(Customizer.withDefaults())
@@ -181,14 +196,16 @@ public class SecurityConfig {
         return AuthorizationServerSettings.builder().issuer(properties.getIssuer()).build();
     }
 
+    /**
+     * Access and ID tokens are JWTs; refresh tokens are also issued to public clients registered for the
+     * {@code refresh_token} grant (see {@link PublicClientRefreshTokenGenerator}).
+     */
     @Bean
-    OAuth2AuthorizationService authorizationService(RegisteredClientRepository clients) {
-        return new InMemoryOAuth2AuthorizationService();
-    }
-
-    @Bean
-    OAuth2AuthorizationConsentService authorizationConsentService(RegisteredClientRepository clients) {
-        return new InMemoryOAuth2AuthorizationConsentService();
+    OAuth2TokenGenerator<?> tokenGenerator(JWKSource<SecurityContext> jwkSource,
+            OAuth2TokenCustomizer<JwtEncodingContext> tokenCustomizer) {
+        JwtGenerator jwtGenerator = new JwtGenerator(new NimbusJwtEncoder(jwkSource));
+        jwtGenerator.setJwtCustomizer(tokenCustomizer);
+        return new DelegatingOAuth2TokenGenerator(jwtGenerator, new PublicClientRefreshTokenGenerator());
     }
 
     @Bean
@@ -196,6 +213,13 @@ public class SecurityConfig {
         List<RegisteredClient> clients = new ArrayList<>();
         for (OpenBasedProperties.Client client : properties.getClients()) {
             clients.add(toRegisteredClient(client, properties, encoder));
+        }
+        // Built-in clients for official apps. They are registered in code rather than application.yml because
+        // an installation's own client list replaces the default list entirely.
+        for (OpenBasedProperties.Client builtin : builtinClients(properties)) {
+            if (clients.stream().noneMatch(c -> c.getClientId().equals(builtin.getClientId()))) {
+                clients.add(toRegisteredClient(builtin, properties, encoder));
+            }
         }
         if (clients.isEmpty()) {
             // A registry needs at least one client; this placeholder cannot complete any flow.
@@ -206,6 +230,23 @@ public class SecurityConfig {
             clients.add(toRegisteredClient(placeholder, properties, encoder));
         }
         return new InMemoryRegisteredClientRepository(clients);
+    }
+
+    static final String ANDROID_CLIENT_ID = "openbased-android";
+    static final String ANDROID_REDIRECT_URI = "org.openbased.android:/oauth2redirect";
+
+    static List<OpenBasedProperties.Client> builtinClients(OpenBasedProperties properties) {
+        List<OpenBasedProperties.Client> builtins = new ArrayList<>();
+        if (properties.getBuiltinClients().isAndroid()) {
+            OpenBasedProperties.Client android = new OpenBasedProperties.Client();
+            android.setClientId(ANDROID_CLIENT_ID);
+            android.setName("OpenBased for Android");
+            // A private-use URI scheme (RFC 8252 §7.1) works for every installation, whatever its address.
+            android.setRedirectUris(List.of(ANDROID_REDIRECT_URI));
+            android.setGrantTypes(Set.of("authorization_code", "refresh_token"));
+            builtins.add(android);
+        }
+        return builtins;
     }
 
     private static RegisteredClient toRegisteredClient(OpenBasedProperties.Client client, OpenBasedProperties properties,
