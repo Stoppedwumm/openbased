@@ -1,1 +1,376 @@
-# openbased
+# OpenBased
+
+OpenBased is a self-hosted media server. This repository contains the server and its REST API (`/api/v1`).
+The API is the product's only interface: the web UI, mobile apps and third-party clients all use the
+same endpoints and the same OAuth2 tokens.
+
+- Java 17 or newer, Spring Boot 3.5, Spring Authorization Server (OAuth2/OIDC)
+- H2 (embedded, default) or PostgreSQL
+- ffmpeg/ffprobe (optional) for stream probing, remuxing and transcoding
+
+## Running
+
+```sh
+mvn package
+java -jar target/openbased-0.1.0-SNAPSHOT.jar
+```
+
+Open http://localhost:8080/ for the web UI. It is a plain client of the API: it signs in through
+`/oauth2/authorize` with PKCE using the `openbased-web` client, so `http://<host>/callback` must be one of
+that client's redirect URIs (and `http://<host>/` a post-logout redirect URI) when you serve it from
+another address.
+
+On first start an `admin` account is created. Its password is taken from
+`openbased.bootstrap.admin-password`, or generated and printed to the log once.
+
+Everything the server writes (database, signing key, uploads, artwork, plugins) goes to
+`openbased.data-dir` (default `./data`).
+
+API documentation is generated from the controllers:
+
+- OpenAPI: `GET /api/v1/openapi.json`
+- Swagger UI: `GET /api/v1/docs`
+
+### Installing as a Linux service (systemd)
+
+```sh
+mvn package
+sudo packaging/linux/install.sh --url http://bigbox:8080
+```
+
+`--url` is the address you will open OpenBased at in the browser (defaults to `http://<hostname>:8080`).
+Signing in only works at that address, because it is where the server allows the OAuth2 redirect back
+to. It is stored as `issuer` in `/etc/openbased/application.yml`; change it there or re-run the installer
+with a new `--url`, then restart.
+
+The installer needs Java 17+ (and ideally ffmpeg). It creates an `openbased` system user and installs:
+
+| Path | Contents |
+| --- | --- |
+| `/opt/openbased/openbased.jar` | The server |
+| `/etc/openbased/application.yml` | Settings (issuer, port, clients, metadata); overrides the built-in defaults |
+| `/etc/openbased/openbased.env` | Secrets and JVM options: `TMDB_API_KEY`, `OPENBASED_ADMIN_PASSWORD`, `JAVA_OPTS` |
+| `/var/lib/openbased` | Database, signing key, uploads, artwork, plugins |
+| `/etc/systemd/system/openbased.service` | The systemd unit |
+
+Then:
+
+```sh
+sudo systemctl status openbased
+sudo journalctl -u openbased -f                              # logs
+sudo journalctl -u openbased | grep 'generated password'     # first admin password, if none was set
+```
+
+The `openbased` user needs read access to your media folders (`rwX` instead of `rX` if you upload into
+them). With the `acl` package:
+
+```sh
+sudo setfacl -R -m u:openbased:rX /srv/media      # existing files
+sudo setfacl -R -d -m u:openbased:rX /srv/media   # files added later
+sudo -u openbased ls /srv/media                   # check
+```
+
+Home directories are usually private (`drwx------`), so a folder like `/home/you/Videos` additionally
+needs `sudo setfacl -m u:openbased:x /home/you`. That lets the service pass through the home directory
+without being able to list or read anything else in it. When a library folder cannot be used, the
+server's error names the directory that blocks access and the command to fix it.
+
+To upgrade, build the new version and run `install.sh` again; configuration and data are kept.
+`sudo packaging/linux/uninstall.sh` removes the service (add `--purge` to also delete configuration, data
+and the user; media files are never touched).
+
+### Configuration
+
+All settings live under `openbased.*` in [`application.yml`](src/main/resources/application.yml).
+The important ones:
+
+| Property | Purpose |
+| --- | --- |
+| `openbased.issuer` | Public base URL; becomes the OAuth2/OIDC issuer. Must match how clients reach the server. |
+| `openbased.clients[*]` | OAuth2 clients. Omit `client-secret` for public clients (PKCE is then required). |
+| `openbased.clients[*].service-user` | For `client_credentials`: the account whose permissions the client acts with. |
+| `openbased.cors-allowed-origins` | Origins of browser clients hosted elsewhere. |
+| `openbased.rate-limit.*` | Requests per window per user/client/IP. |
+| `openbased.uploads.*` | Chunk size, maximum size, allowed extensions. |
+| `openbased.playback.*` | ffmpeg/ffprobe paths, idle timeout for playback sessions. |
+| `openbased.sync.retention` | How long removed media IDs are kept for incremental sync (default 90 days). |
+| `openbased.downloads.*` | Retention of prepared downloads (`retention`, default 7 days) and how many a user may have in preparation (`max-pending-per-user`, default 5). |
+| `openbased.roles.user` | Permissions of the `USER` role (defaults below); e.g. remove `media.download` to allow streaming but not downloads. |
+| `openbased.metadata.tmdb.api-key` | Enables the built-in TMDB metadata provider (or set `TMDB_API_KEY`). |
+
+To use PostgreSQL, set `spring.datasource.url`, `username` and `password`.
+
+### Tests
+
+```sh
+mvn test
+```
+
+The integration tests start the server on a random port and drive it over HTTP and WebSocket, including
+OAuth2 token issuance, scans, Range streaming, resumable uploads, events, personal access tokens,
+library isolation between users and the plugin lifecycle.
+
+## Clients
+
+- **Web UI** at `/`, built into the server.
+- **Kodi** add-on in [`clients/kodi`](clients/kodi/README.md), linked to an account with a short code.
+
+Devices without a keyboard can use the same linking flow (`POST /api/v1/device-links`, show the
+`userCode`, poll `POST /api/v1/device-links/token`); the user approves the code on the web UI's
+**Link a device** page (`/#/link`) and the device receives a personal access token restricted to
+browsing, playback and watch history, together with its `tokenId`. To sign out, a device revokes its own
+token with `DELETE /api/v1/tokens/current`; this works with any personal access token and needs no scope.
+
+## Authentication and authorization
+
+| Flow | Use |
+| --- | --- |
+| Authorization Code + PKCE | Interactive clients (`/oauth2/authorize`, `/oauth2/token`) |
+| Client Credentials | Machine-to-machine; acts as the configured `service-user` |
+| Personal access tokens (`ob_pat_…`) | Scripts; created on the web UI's **API tokens** page or with `POST /api/v1/tokens` |
+
+Discovery is at `/.well-known/openid-configuration`, keys at `/oauth2/jwks`, and UserInfo at
+`/api/v1/userinfo`.
+
+### Native apps
+
+The server has a built-in public client for the official Android app, so it works on every installation
+without editing `application.yml`:
+
+| Client ID | Redirect URI | Grants |
+| --- | --- | --- |
+| `openbased-android` | `org.openbased.android:/oauth2redirect` | `authorization_code` (PKCE required), `refresh_token` |
+
+Set `openbased.builtin-clients.android: false` to disable it, or define a client with the same ID under
+`openbased.clients` to change it.
+
+Public clients registered for the `refresh_token` grant receive refresh tokens:
+
+- Refresh with `grant_type=refresh_token&refresh_token=…&client_id=…`; no secret is needed.
+- Refresh tokens rotate: every refresh returns a new one, and the previous access token stops working.
+- Using a refresh token that was already rotated away revokes the whole sign-in (reuse detection). Apps
+  must therefore never refresh twice in parallel with the same token.
+- Refresh tokens expire after `openbased.tokens.refresh-token-ttl` (30 days) without use; each refresh
+  starts the period again.
+- To sign out, revoke the refresh token at `POST /oauth2/revoke` with `token=…&client_id=…`. The sign-in's
+  access tokens stop working at once.
+
+Sign-ins are stored in the database, so they survive restarts. Authorization codes and access, refresh and
+device codes are stored as SHA-256 hashes.
+
+Every protected request is checked for:
+
+1. a valid, unexpired token (an access token signed by this server whose sign-in has not been revoked, or
+   an unrevoked PAT);
+2. the endpoint's scope on the token;
+3. the user's permission of the same name (scopes and permissions share names);
+4. access to the resource. Users see a library when it is shared with all users, they are a member, or
+   they hold `server.admin`. Media in other libraries is reported as `404`, so its existence is not revealed.
+
+Access tokens only carry the requested scopes the user actually holds. ID tokens are rejected as bearer
+tokens. A PAT can only be created with scopes held by both the user and the token used to create it.
+
+The `USER` role grants `openid profile email media.read media.stream media.download library.read history.read
+history.write` unless `openbased.roles.user` lists other permissions (unknown names stop the server at startup);
+`ADMIN` grants every scope. Additional permissions can be granted per user.
+
+### Streaming links
+
+Media URLs never work without authorization. Browsers cannot attach headers to `<video>` elements or
+WebSockets, so a short-lived OAuth2 access token may be passed as `?access_token=` **only** on
+`GET /api/v1/playback/{sessionId}/stream` and `/api/v1/events`. Personal access tokens are never accepted
+in URLs. Playback sessions belong to the user that created them and end on `DELETE`, after the idle
+timeout, or on restart.
+
+## Endpoints
+
+| Endpoint | Scope |
+| --- | --- |
+| `GET /api/v1/userinfo` | `openid` |
+| `GET /api/v1/users/me`, `GET /api/v1/users/me/permissions` | `profile` |
+| `GET /api/v1/users`, `GET /api/v1/users/{id}` | `users.read` |
+| `POST /api/v1/users`, `PATCH /api/v1/users/{id}` | `users.write` |
+| `GET /api/v1/libraries`, `GET /api/v1/libraries/{id}` | `library.read` |
+| `POST /api/v1/libraries`, `PATCH`/`DELETE /api/v1/libraries/{id}`, `POST /api/v1/libraries/{id}/scan` | `library.write` |
+| `GET /api/v1/media/removed` | `media.read` |
+| `GET /api/v1/media`, `GET /api/v1/media/{id}`, `GET /api/v1/search`, `GET /api/v1/artwork/{id}` | `media.read` |
+| `GET /api/v1/metadata/search` | `media.read` |
+| `POST /api/v1/media/{id}/metadata/refresh` | `library.write` |
+| `GET /api/v1/media/{id}/stream` | `media.stream` |
+| `GET /api/v1/media/{id}/download` | `media.download` |
+| `POST`/`GET /api/v1/downloads`, `GET`/`DELETE /api/v1/downloads/{id}`, `GET /api/v1/downloads/{id}/file` | `media.download` |
+| `GET /api/v1/media/{id}/subtitles` | `media.read` |
+| `GET /api/v1/media/{id}/subtitles/{trackId}` | `media.stream` or `media.download` |
+| `POST /api/v1/playback/sessions`, `GET`/`DELETE /api/v1/playback/{id}`, `GET /api/v1/playback/{id}/stream` | `media.stream` |
+| `PUT /api/v1/media/{id}/progress`, `POST /api/v1/progress/batch` | `history.write` |
+| `GET /api/v1/media/{id}/progress`, `GET /api/v1/history`, `GET /api/v1/continue-watching` | `history.read` |
+| `POST`/`GET`/`PATCH`/`DELETE /api/v1/uploads…` | `upload` |
+| `GET`/`POST`/`DELETE /api/v1/tokens…` | `profile` |
+| `GET /api/v1/plugins` | `plugins.read` or `plugins.manage` |
+| `POST /api/v1/plugins…`, `DELETE /api/v1/plugins/{id}`, `/api/v1/plugins/{id}/settings` | `plugins.manage` |
+| `GET /api/v1/jobs/{id}`, `POST /api/v1/jobs/{id}/cancel` | job owner, or `server.read` / `server.admin` |
+| `WS /api/v1/events` | any token; events are filtered per subscriber |
+
+Errors always use the standard body:
+
+```json
+{ "error": "MEDIA_NOT_FOUND", "message": "…", "requestId": "01J…", "timestamp": "…" }
+```
+
+The `requestId` is also returned in the `X-Request-Id` header. List endpoints take `page` (from 0) and
+`pageSize` (1–200) and return `items`, `page`, `pageSize` and `total`.
+
+### Units
+
+- `duration` on media and files: milliseconds. `runtime`: minutes.
+- Playback progress `position`/`duration`: seconds. If `completed` is omitted it is set once 95% is reached.
+
+### Offline progress
+
+Clients that queue progress while offline send the time each update was recorded as `recordedAt`
+(ISO-8601). The server clamps it between the time the media item was added to the library and its own
+clock, keeps the newest progress per media item (an update older than the stored one returns
+`"applied": false` with the stored values), and dates the watch-history entry with it. Without
+`recordedAt` the server's time is used.
+
+`POST /api/v1/progress/batch` takes `{"updates": [{"mediaId", "position", "duration", "completed",
+"recordedAt"}, …]}` (up to 500) and applies them oldest first. Each update succeeds or fails on its own; the
+response has one result per update, in request order, with `status` `APPLIED`, `IGNORED` (older than the
+stored progress) or `FAILED` (with `error` and `message`). A malformed request, such as an item with a
+negative `position` or no `mediaId`, is rejected as a whole with `422 VALIDATION_FAILED` before any update
+is applied.
+
+### Playback
+
+`POST /api/v1/playback/sessions` compares the file (probed with ffprobe) with the client's
+`capabilities`:
+
+- `DIRECT_PLAY`: container and codecs are supported; the file is served with `Range` support.
+- `REMUX`: codecs are supported but the container is not; streams are copied into fragmented MP4 or WebM.
+- `TRANSCODE`: re-encoded to H.264/AAC in MP4, or VP9/Opus in WebM.
+
+Remuxed and transcoded streams do not support `Range`; seek with `?start=<seconds>`.
+
+### Incremental sync
+
+Clients that keep a copy of the catalogue (for example for offline use) sync changes instead of reloading it:
+
+1. `GET /api/v1/media/removed?since=<last syncedAt>` lists the IDs of media removed since then (`items` of
+   `mediaId`, `removedAt`; paged) and returns `syncedAt` to store for next time.
+2. If `resetRequired` is true, reload everything: something changed that these lists cannot describe (a
+   library's access changed or it was deleted, the user's administrator access changed, or `since` is older than
+   `openbased.sync.retention`).
+3. Otherwise `GET /api/v1/media?updatedSince=<last syncedAt>` (with the usual paging) returns items added or
+   changed since then.
+
+`syncedAt` is a minute in the past, so changes committed while a sync runs are not missed; an item may be sent
+twice. Use the server's `syncedAt`, never the device's clock. Removals are only listed for libraries the caller
+can see. Playback progress is not part of an item's `updatedAt`; sync it with `/history` and
+`/continue-watching`.
+
+### Downloads
+
+`GET /api/v1/media/{id}/download` (optionally `?fileId=`) returns the original file for keeping on the device,
+with `Content-Disposition: attachment` (the file's name, ASCII in `filename` and exact in `filename*`),
+`Content-Length`, `Accept-Ranges`, a strong `ETag` and `Last-Modified`. `HEAD` returns the same headers.
+
+To resume, send `Range: bytes=<received>-` together with `If-Range: <ETag>` (or the `Last-Modified` date; prefer the `ETag`, which changes even when a file is replaced
+twice within a second). If
+the file is unchanged the response is `206` with the rest; if it was replaced since, it is `200` with the whole new
+file, so a client never joins parts of two versions. `If-None-Match` returns `304` when the copy is current.
+
+`media.download` lets administrators keep well-behaved clients from offering downloads; it is not a protection:
+anyone with `media.stream` can read the whole file from `/stream` with Range requests.
+
+### Optimized downloads
+
+For files the device cannot play, or that are too large for it, the server prepares a copy:
+
+1. `POST /api/v1/downloads` with `mediaId`, optional `fileId`, `capabilities` (as for playback sessions), and
+   optionally `maxHeight` (pixels) and `maxVideoBitrate` (bits per second). The server decides as for playback:
+   `DIRECT_PLAY` is `READY` at once and serves the original; `REMUX` and `TRANSCODE` start a background job and
+   are `PENDING`. A file taller than `maxHeight`, or whose average bitrate exceeds `maxVideoBitrate`, is
+   transcoded (scaled down and capped) even if the device could play it. The response is `201`, or `200` with
+   the existing download when the same file was already requested the same way and is pending or ready.
+2. Wait for the `DOWNLOAD_READY` or `DOWNLOAD_FAILED` event, or poll `GET /api/v1/downloads/{id}` (`progress`
+   0–100, `error` on failure).
+3. Fetch `url` (`GET /api/v1/downloads/{id}/file`). It supports Range, `If-Range`, `ETag` and `Last-Modified`
+   like `/media/{id}/download`; the file is named after the original with the new extension.
+
+Prepared files are regular MP4 (with the index at the start) or WebM, kept for `openbased.downloads.retention`
+after they became ready (`expiresAt`); then the download is `EXPIRED` and its file returns `410`. `DELETE`
+cancels a pending download or deletes the prepared file. `GET /api/v1/downloads` lists the caller's downloads.
+Downloads are private to the user who requested them, and access to the media item is checked again on every
+file request. Preparations interrupted by a restart are `FAILED`; request them again.
+### Subtitles
+
+`GET /api/v1/media/{id}/subtitles` (optionally `?fileId=`) lists a file's subtitle tracks: `id`, `source`
+(`EMBEDDED` or `SIDECAR`), `language`, `title`, `format`, `forced`, `defaultTrack`, `hearingImpaired`, and
+`text` (whether it can be served). `GET /api/v1/media/{id}/subtitles/{trackId}` returns a track as
+`text/vtt; charset=UTF-8`.
+
+- Embedded tracks are read by ffprobe during the scan (files scanned by older versions are probed again on the
+  next scan). Text tracks (SubRip, ASS/SSA, WebVTT, MP4 text) are converted by ffmpeg and cached in
+  `data-dir/subtitle-cache`; image tracks (PGS, VobSub, DVB) are listed with `text: false` and cannot be served.
+- Sidecar `.srt` and `.vtt` files next to the video and named after it are listed on each request, so new ones
+  appear without a rescan: `Movie.srt`, `Movie.en.srt`, `Movie.en.sdh.srt`, `Movie.pt-br.forced.vtt`. The first
+  2–3 letter code (optionally with a region) is the language; `forced`, `default` and `sdh`/`cc`/`hi` set the
+  flags; other words become the title. SubRip is converted to WebVTT; UTF-8, UTF-16 with BOM and Windows-1252
+  are recognised.
+
+### Artwork sizes
+
+`GET /api/v1/artwork/{id}?w=<pixels>` returns the image scaled down to that width, rounded up to 92, 154, 185,
+342, 500, 780 or 1280 so that only these sizes are stored. Images are never enlarged; wider requests, and
+formats the server cannot decode (WebP), get the original. Scaled copies are JPEG, or PNG when the image has
+transparency, and are cached in `data-dir/artwork-cache`; a replaced image is scaled again, and copies of
+removed artwork are deleted daily.
+### Uploads
+
+1. `POST /api/v1/uploads` with `filename`, `size`, `libraryId` returns `id` and `chunkSize`.
+2. `PATCH /api/v1/uploads/{id}` with `Content-Type: application/octet-stream` and
+   `Content-Range: bytes start-end/total`. A chunk may start anywhere up to the bytes already received,
+   so a chunk whose response was lost can be re-sent. To resume, read `received` from
+   `GET /api/v1/uploads/{id}`.
+3. `POST /api/v1/uploads/{id}/complete` moves the file into the library's first folder and processes it in
+   the background. `GET /api/v1/uploads/{id}` then reports `COMPLETED` and the `mediaId`.
+
+Abandoned uploads are cancelled after `openbased.uploads.stale-after`.
+
+### Events
+
+`WS /api/v1/events` sends JSON events such as
+`{"type":"MEDIA_ADDED","timestamp":"…","data":{"mediaId":"media_…"}}`. Media and scan events go to users
+who can see the library, playback, upload and download events go to the user they concern, and `USER_*` events go to
+holders of `users.read`. The connection closes (code 4001) when its token expires.
+
+## Plugins
+
+A plugin is a JAR containing `META-INF/openbased-plugin.properties`:
+
+```properties
+id=com.example.plugin
+name=Example Plugin
+version=1.0.0
+main=com.example.ExamplePlugin
+```
+
+`main` implements `org.openbased.plugin.api.OpenBasedPlugin`. In `start(PluginContext)` a plugin can
+register metadata providers, media processors (run after new media is scanned), event listeners, REST
+endpoints under `/api/v1/plugins/{pluginId}/…` (each with an optional required scope), scheduled jobs and
+settings.
+
+Install with `POST /api/v1/plugins`, sending the JAR either as multipart field `file` or as an
+`application/java-archive` body. Plugins are installed **disabled** and run with the server's privileges,
+so only `plugins.manage` holders can install or enable them.
+
+## Known gaps
+
+- Playback sessions are kept in memory and end when the server restarts.
+- The token endpoint's `scope` field echoes the requested scopes; the access token itself only carries
+  those the user holds.
+- Artwork is sent with `Cache-Control: private, max-age=86400` instead of `public` so that shared caches
+  never serve images to clients that have not passed the access check.
+- Plugins cannot yet register storage or authentication providers.
+- The schema is managed with Hibernate `ddl-auto: update`; versioned migrations (Flyway) should replace
+  it before the first release.

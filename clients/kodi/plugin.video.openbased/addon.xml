@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<addon id="plugin.video.openbased" name="OpenBased" version="0.1.0" provider-name="OpenBased">
+    <requires>
+        <import addon="xbmc.python" version="3.0.0"/>
+    </requires>
+    <extension point="xbmc.python.pluginsource" library="main.py">
+        <provides>video</provides>
+    </extension>
+    <!-- Reports playback progress back to OpenBased. -->
+    <extension point="xbmc.service" library="service.py"/>
+    <extension point="xbmc.addon.metadata">
+        <summary lang="en_GB">Browse and play your OpenBased media server</summary>
+        <description lang="en_GB">Browse the libraries on your OpenBased server, play movies, shows and music, and keep resume points and watched status in sync with every other OpenBased client. Link the add-on by entering a short code in the OpenBased web UI.</description>
+        <platform>all</platform>
+        <license>MIT</license>
+        <source>https://github.com/Stoppedwumm/openbased</source>
+        <assets>
+            <icon>resources/media/icon.png</icon>
+        </assets>
+    </extension>
+</addon>
